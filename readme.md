@@ -15,6 +15,17 @@
 3. add `from .franka_rope import * \n IsaacUIUtils.setUp()` to `PATH_TO_ISAAC_SIM\exts\omni.isaac.examples\omni\isaac\examples\user_examples\__init__.py`
 4. profit! ![](screenshot.png)
 
+# code overview
+- `class FrankaRope(BaseSample):` handles core logic and isolated events including simulation
+    - BaseSample is stateful and provides life cycle management
+- `class ControlFlow:` handles basic platform agnostic basic control logic
+- `class IsaacUIUtils(ControlFlow):` and `class VRUIUtils(ControlFlow):` are for complex interdependent button events/states
+- `class RigidBodyRope:` is based on the reference implementation `PATH_TO_ISAAC_SIM\extsphysics\omni.physx.demos\omni\physxdemos\scenes\RigidBodyRopesDemo.py`
+    - it does not use the `pointinstancer` since 
+        - `isaacsimpublisher` currently rely on the `fabric` backend
+        - and current implementation of `fabric` (v106.1.9) backend had runtime issue with `pointinstancer`
+        >    Point instancer rigid bodies are now not updated through fabric extension. Runtime changes to the scene composition might not be correctly reflected in fabric and maybe lead into issues.
+
 # fix
 xr simulator will only launch once, unless it was destroyed properly:
 - follow https://communityforums.atmeta.com/t5/Unity-Development/Meta-XR-Simulator-starts-only-once/td-p/1141806 to add life cycle management to `Assets\SceneLoader\Scripts\RigidObjectsController.cs` in `IRXR-Unity`
