@@ -18,10 +18,11 @@
 # setup
 1. unzip into a folder
 2. create softlink: `ln -s "PATH_TO_UNZIPPED_FOLDER" "PATH_TO_ISAAC_SIM\exts\omni.isaac.examples\omni\isaac\examples\user_examples\franka_rope"`
-3. add `from .franka_rope import * \n IsaacUIUtils.setUp()` to `PATH_TO_ISAAC_SIM\exts\omni.isaac.examples\omni\isaac\examples\user_examples\__init__.py`
+3. add `from .franka_rope import *` to `PATH_TO_ISAAC_SIM\exts\omni.isaac.examples\omni\isaac\examples\user_examples\__init__.py`
 4. profit! 
     ![](isaacsim.png)
     ![](vr.png)
+    ![](metaquest3.mkv)
 
 # code overview
 - `class FrankaRope(BaseSample):` handles core logic and isolated events including simulation
