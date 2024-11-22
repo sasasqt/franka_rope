@@ -10,3 +10,4 @@
 # NOTE: Import here your extension examples to be propagated to ISAAC SIM Extensions startup
 from .franka_rope import IsaacUIUtils, VRUIUtils
 IsaacUIUtils.setUp()
+# VRUIUtils.setUp()
