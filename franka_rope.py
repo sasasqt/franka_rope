@@ -10,9 +10,9 @@
 # TODO a better way to align cube with gripper orientation
 
 # NEXT 
-# TODO headless + performance tuning
-# TODO replay saved json (maybe)
+# TODO tuning rope damping, stiffness etc
 # TODO rewrite isaacsimpublisher: to support openusd backend (maybe), to support visuals, to support rotations
+# TODO replay saved json (maybe)
 # TODO omniverse extension on shutdown/hot reloading: cleanup 
 
 # To launch
@@ -27,7 +27,12 @@
 # position means coord w.r.t. global frame in omniverse
 # translation means coord w.r.t. local frame in omniverse
 # orientation depends on whether position or translation is used
+# Z is UP in isaacsim, but Y is UP in dynamic control, physx and unity!
+# quaternion is wxyz in isaacsim
+# c++ api headers are in kit\dev\fabric\include\usdrt\scenegraph\usd folder
 import carb
+from viztracer import VizTracer
+tracer = VizTracer(tracer_entries=99999999,output_file="my_trace.json")
 
 from omni.isaac.examples.base_sample import BaseSample
 import numpy as np
@@ -47,6 +52,10 @@ import omni.kit.app
 manager = omni.kit.app.get_app().get_extension_manager()
 # enable immediately
 manager.set_extension_enabled_immediate("omni.physx.fabric", True)
+from omni.physx import get_physx_interface
+# physx_interface = get_physx_interface()
+# num_threads = 2
+# physx_interface.set_thread_count(num_threads)
 
 from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_angles
 from omni.isaac.core.utils.prims import is_prim_path_valid
@@ -88,7 +97,7 @@ class FrankaRope(BaseSample):
         super().__init__()
         self._init_vars()
         self._world_settings = {
-            "physics_dt": 1.0 / 30.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 30.0,
+            "physics_dt": 1.0 / 60.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 60.0,
             "physics_prim_path": "/PhysicsScene", "sim_params":None, "set_defaults":True, "backend":"numpy","device":None
         }
 
@@ -117,7 +126,7 @@ class FrankaRope(BaseSample):
     # should add tasks here
     # ~~BUT: Err set up scene:~~
     # ~~Cannot add the object target to the scene since its name is not unique~~
-    # slow and weird behaviour
+    # ~~slow and weird behaviour~~
     def setup_scene(self) -> None:
         world = self._world
         world.clear()
@@ -161,8 +170,8 @@ class FrankaRope(BaseSample):
             franka_robot_name=f"{_str}_franka"
             franka_prim_path=f"/World/{franka_robot_name}"
             target_position=[0.2*idx-0.1, 0.0, 0.015]
-            self._franka_position[_str]=position=[0.0,1.0*idx-0.25,0.0]
-            self._franka_inverse_position[_str]=[0.0,-1.0*idx+0.25,0.0]
+            self._franka_position[_str]=position=[0.0,0.5*idx-0.25,0.0]
+            self._franka_inverse_position[_str]=[0.0,-0.5*idx+0.25,0.0]
 
             # rotate the left franka (left to the rope) by 180 around z: to make workspace easier
             # dont enter quaternion manually: euler_angles_to_quat for stability: eps/6.123234e-17 in [6.123234e-17 0.000000e+00 0.000000e+00 1.000000e+00]
@@ -193,7 +202,7 @@ class FrankaRope(BaseSample):
     # await world.reset_async()
 
     # actually we dont need this, world.add_task() already set the world._current_tasks
-    # # to mimic the loas world async behavior from base sample.py if we setup tasks in setup_post_load
+    # # to mimic the load_world_async behavior from base sample.py if we setup tasks in setup_post_load
     # # since tasks are here not in setup scene
     # self._current_tasks = self._world.get_current_tasks() 
 
@@ -206,7 +215,7 @@ class FrankaRope(BaseSample):
 
     async def setup_post_load(self) -> None:
         world = self._world
-
+        # print("rope local positions are: ",self._rope.get_local_pose()[0])
         # generate random rope shape procedurally
         # TODO play it in another stage, and copy the steady state result back into the main stage
         # better to let users do it
@@ -239,8 +248,14 @@ class FrankaRope(BaseSample):
             self._target_name[_str]= task_params["target_name"]["value"] 
             self._target_prim_path[_str]= task_params["target_prim_path"]["value"] 
             robot = self._robot[_str] = world.scene.get_object(robot_name)
+            # it uses exts\omni.isaac.motion_generation\motion_policy_configs\franka\rmpflow\config.json
+            # another way using motion policy: exts\omni.isaac.franka\omni\isaac\franka\controllers\rmpflow_controller.py
+            #   motion policy: extension_examples\follow_target\follow_target.py
             self._robot_articulation_solver[_str] = KinematicsSolver(robot)
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
+
+            # close the gripper properly 
+            robot._gripper.close()
             _robot_dof=robot.num_dof
             # In radians/s, or stage_units/s
             max_vel = np.zeros(_robot_dof) + 4.0
@@ -322,10 +337,9 @@ class FrankaRope(BaseSample):
             target_position=np.array([-_quat_pos[1],-_quat_pos[2],_quat_pos[3]])
             
             target_orientation=observations[self._target_name[_str]]["orientation"]
-            # otherwise rotation goes with the shortcut path
+
             axis,angle=self._q2aa(target_orientation)
             _angle=np.abs(self._q2aa(self._franka_orientation[_str])[1])
-
             # TODO a better way to align arbitrary rotations?
             # and to consider rotation > 180 degrees, and ccw cw
             # example: self._q2aa(euler_angles_to_quat(np.array([0.0,0.0,np.pi*1.5]))): (array([ 0.,  0., -1.]), 1.5707963267948968)
@@ -391,6 +405,7 @@ class FrankaRope(BaseSample):
                         # rotation data is too large and unnecessary
                         "rope_world_position": rope.get_world_position(),
                     }
+                _dict["Datetime"]={"now":datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}
                 return _dict
 
             data_logger.add_data_frame_logging_func(frame_logging_func)
@@ -612,7 +627,10 @@ class ControlFlow:
                 # better: not modifty the task state
                 # cls.buttons["Follow Target"].default()
                 # await cls._sample._on_follow_target_event_async(False)
+                #tracer.stop()
+                #tracer.save()
             else:
+                #tracer.start()
                 pass
             await cls._sample._on_simulation_event_async(playing,callback_fn)
         asyncio.ensure_future(_on_simulation_button_event_async(playing,callback_fn))
@@ -1191,7 +1209,7 @@ class RigidBodyRope:
         self,
         _world,
         _scene_name="RopeScene",
-        _rope_name="rope",
+        _rope_name="Rope",
         _linkHalfLength=0.025,
         _linkRadius=None,
         _ropeLength=2.0,
@@ -1216,6 +1234,7 @@ class RigidBodyRope:
         self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
         self._density = _density
         self._capsules=[]
+        UsdGeom.Scope.Define(_world.stage, self._scene_path)
 
         # physics options:
         self._contactOffset = 2.0
@@ -1367,174 +1386,205 @@ class RigidBodyRope:
         return joint
     
 # fabric does not support pointinstancer: thus discarded
-# class RigidBodyRope_withpointinstancer:
-#     def __init__(
-#         self,
-#         _stage,
-#         name="RopeScene",
-#         _linkHalfLength=0.03,
-#         _linkRadius=None,
-#         _ropeLength=2.0,
-#         _rope_damping=10,
-#         _rope_stiffness=1.0,
-#         _coneAngleLimit=110,
-#         _ropeColor=None,
-#         _density=0.00005,
-#     ):
-#         self._stage = _stage
-#         self._ropeScenePath=f"/World/{name}" #stage_utils.get_next_free_path(f"/World/{name}")
-#         self._linkHalfLength = _linkHalfLength
-#         self._linkRadius = _linkRadius or 0.5 * self._linkHalfLength
-#         self._ropeLength = _ropeLength
-#         self._rope_damping = _rope_damping
-#         self._rope_stiffness = _rope_stiffness
-#         self._coneAngleLimit = _coneAngleLimit
-#         self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
-#         self._density = _density
+class RigidBodyRope_withpointinstancer:
+    def __init__(
+        self,
+        _world,
+        _scene_name="RopeScene",
+        _rope_name="Rope",
+        _linkHalfLength=0.025,
+        _linkRadius=None,
+        _ropeLength=2.0,
+        _rope_damping=10,
+        _rope_stiffness=1.0,
+        _coneAngleLimit=110,
+        _ropeColor=None,
+        _density=0.00005,
+    ):
+        self._world = _world
+        self._stage=_world.stage
+        self._scene= _world.scene
+        self._scene_name=_scene_name
+        self._rope_name=_rope_name
+        self._scene_path=f"/World/{_scene_name}" #stage_utils.get_next_free_path(f"/World/{name}")
+        self._linkHalfLength = _linkHalfLength
+        self._linkRadius = _linkRadius or 0.5 * self._linkHalfLength
+        self._ropeLength = _ropeLength
+        self._rope_damping = _rope_damping
+        self._rope_stiffness = _rope_stiffness
+        self._coneAngleLimit = _coneAngleLimit
+        self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
+        self._density = _density
+        UsdGeom.Scope.Define(_world.stage, self._scene_path)
 
-
-#         # physics options:
-#         self._contactOffset = 2.0
-#         self._physicsMaterialPath = Sdf.Path(self._ropeScenePath).AppendChild("PhysicsMaterial")
-#         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
-#         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
-#         material.CreateStaticFrictionAttr().Set(0.5)
-#         material.CreateDynamicFrictionAttr().Set(0.5)
-#         material.CreateRestitutionAttr().Set(0)
+        # physics options:
+        self._contactOffset = 2.0
+        self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
+        UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
+        material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
+        material.CreateStaticFrictionAttr().Set(0.5)
+        material.CreateDynamicFrictionAttr().Set(0.5)
+        material.CreateRestitutionAttr().Set(0)
     
-#     def deleteRope(self,path):
-#         prims_utils.delete_prim(path)
+    def deleteRope(self):
+        prims_utils.delete_prim(self._scene_name)
 
-#     def createRope(self):    
-#         linkLength = 2.0 * self._linkHalfLength - self._linkRadius
-#         numLinks = int(self._ropeLength / linkLength)
-#         xStart = -numLinks * linkLength * 0.5
+    def get_world_pose(self):
+        pass
+    
+    def get_local_pose(self):
+        pass
 
-#         self._ropePrimPath=scopePath=stage_utils.get_next_free_path("rope", self._ropeScenePath)
-#         UsdGeom.Scope.Define(self._stage, scopePath)
 
-#         # capsule instancer
-#         instancerPath = Sdf.Path(scopePath).AppendChild("rigidBodyInstancer")
-#         rboInstancer = UsdGeom.PointInstancer.Define(self._stage, instancerPath)
+    def get_local_position(self):
+        pass
+        # from pxr import Usd, UsdGeom
+        # import omni.usd
+        # from omni.isaac.core.utils.prims import get_prim_at_path
+        # instancer_path = "/World/RopeScene/Rope/RigidBodyInstancer"
 
-#         capsulePath = instancerPath.AppendChild("capsule")
-#         self._createCapsule(capsulePath)
+        # # Get the joint prim
+        # instancer_prim = get_prim_at_path(instancerPath)
+        # point_instancer = UsdGeom.PointInstancer(instancer_prim)
+        # rel=point_instancer.GetPositionsAttr().Get()
+        # print(rel)
+    
+    def get_world_position(self):
+        pass
+    
+    def createRope(self):    
+        linkLength = 2.0 * self._linkHalfLength - self._linkRadius
+        numLinks = int(self._ropeLength / linkLength)
+        xStart = -numLinks * linkLength * 0.5
 
-#         meshIndices = []
-#         positions = []
-#         orientations = []
+        _rope_name=self._rope_name
+        self._rope_path=xformPath=stage_utils.get_next_free_path(_rope_name, self._scene_path)
+        UsdGeom.Xform.Define(self._stage, xformPath)
 
-#         y = 0.20 # todo
-#         z = 0.0
+        # capsule instancer
+        self._rboinstancer_path=instancerPath = Sdf.Path(xformPath).AppendChild("RigidBodyInstancer")
+        # api: kit\dev\fabric\include\usdrt\scenegraph\usd\usdGeom\pointInstancer.h
+        rboInstancer = UsdGeom.PointInstancer.Define(self._stage, instancerPath)
 
-#         for linkInd in range(numLinks):
-#             meshIndices.append(0)
-#             x = xStart + linkInd * linkLength
-#             positions.append(Gf.Vec3f(x, y, z))
-#             orientations.append(Gf.Quath(1.0))
+        capsulePath = instancerPath.AppendChild("Capsule")
+        self._createCapsule(capsulePath)
 
-#         meshList = rboInstancer.GetPrototypesRel()
-#         # add mesh reference to point instancer
-#         meshList.AddTarget(capsulePath)
+        meshIndices = []
+        positions = []
+        orientations = []
 
-#         rboInstancer.GetProtoIndicesAttr().Set(meshIndices)
-#         rboInstancer.GetPositionsAttr().Set(positions)
-#         rboInstancer.GetOrientationsAttr().Set(orientations)
+        y = 0.0 
+        z = 0.5
 
-#         # joint instancer
-#         jointInstancerPath = Sdf.Path(scopePath).AppendChild("jointInstancer")
-#         jointInstancer = PhysxSchema.PhysxPhysicsJointInstancer.Define(self._stage, jointInstancerPath)
+        capsules = []
+        self._capsules=[]
+        for linkInd in range(numLinks):
+            meshIndices.append(0)
+            x = xStart + linkInd * linkLength
+            positions.append(Gf.Vec3f(x, y, z))
+            orientations.append(Gf.Quath(1.0))
 
-#         jointPath = jointInstancerPath.AppendChild("joint")
-#         self._createJoint(jointPath)
+        meshList = rboInstancer.GetPrototypesRel()
+        # add mesh reference to point instancer
+        meshList.AddTarget(capsulePath)
 
-#         meshIndices = []
-#         body0s = []
-#         body0indices = []
-#         localPos0 = []
-#         localRot0 = []
-#         body1s = []
-#         body1indices = []
-#         localPos1 = []
-#         localRot1 = []      
-#         body0s.append(instancerPath)
-#         body1s.append(instancerPath)
+        rboInstancer.GetProtoIndicesAttr().Set(meshIndices)
+        rboInstancer.GetPositionsAttr().Set(positions)
+        rboInstancer.GetOrientationsAttr().Set(orientations)
 
-#         jointX = self._linkHalfLength - 0.5 * self._linkRadius
-#         for linkInd in range(numLinks - 1):
-#             meshIndices.append(0)
+        # joint instancer
+        self._jointinstancer_path=jointInstancerPath = Sdf.Path(xformPath).AppendChild("JointInstancer")
+        jointInstancer = PhysxSchema.PhysxPhysicsJointInstancer.Define(self._stage, jointInstancerPath)
 
-#             body0indices.append(linkInd)
-#             body1indices.append(linkInd + 1)
+        jointPath = jointInstancerPath.AppendChild("Joint")
+        self._createJoint(jointPath)
+
+        meshIndices = []
+        body0s = []
+        body0indices = []
+        localPos0 = []
+        localRot0 = []
+        body1s = []
+        body1indices = []
+        localPos1 = []
+        localRot1 = []      
+        body0s.append(instancerPath)
+        body1s.append(instancerPath)
+
+        jointX = self._linkHalfLength - 0.5 * self._linkRadius
+        for linkInd in range(numLinks - 1):
+            meshIndices.append(0)
+
+            body0indices.append(linkInd)
+            body1indices.append(linkInd + 1)
  
-#             localPos0.append(Gf.Vec3f(jointX, 0, 0)) 
-#             localPos1.append(Gf.Vec3f(-jointX, 0, 0)) 
-#             localRot0.append(Gf.Quath(1.0))
-#             localRot1.append(Gf.Quath(1.0))
+            localPos0.append(Gf.Vec3f(jointX, 0, 0)) 
+            localPos1.append(Gf.Vec3f(-jointX, 0, 0)) 
+            localRot0.append(Gf.Quath(1.0))
+            localRot1.append(Gf.Quath(1.0))
 
-#         meshList = jointInstancer.GetPhysicsPrototypesRel()
-#         meshList.AddTarget(jointPath)
+        meshList = jointInstancer.GetPhysicsPrototypesRel()
+        meshList.AddTarget(jointPath)
+        # api: kit\dev\fabric\include\usdrt\scenegraph\usd\physxSchema\physxPhysicsJointInstancer.h
+        jointInstancer.GetPhysicsProtoIndicesAttr().Set(meshIndices)
 
-#         jointInstancer.GetPhysicsProtoIndicesAttr().Set(meshIndices)
+        jointInstancer.GetPhysicsBody0sRel().SetTargets(body0s)
+        jointInstancer.GetPhysicsBody0IndicesAttr().Set(body0indices)
+        jointInstancer.GetPhysicsLocalPos0sAttr().Set(localPos0)
+        jointInstancer.GetPhysicsLocalRot0sAttr().Set(localRot0)
 
-#         jointInstancer.GetPhysicsBody0sRel().SetTargets(body0s)
-#         jointInstancer.GetPhysicsBody0IndicesAttr().Set(body0indices)
-#         jointInstancer.GetPhysicsLocalPos0sAttr().Set(localPos0)
-#         jointInstancer.GetPhysicsLocalRot0sAttr().Set(localRot0)
+        jointInstancer.GetPhysicsBody1sRel().SetTargets(body1s)
+        jointInstancer.GetPhysicsBody1IndicesAttr().Set(body1indices)
+        jointInstancer.GetPhysicsLocalPos1sAttr().Set(localPos1)
+        jointInstancer.GetPhysicsLocalRot1sAttr().Set(localRot1)
 
-#         jointInstancer.GetPhysicsBody1sRel().SetTargets(body1s)
-#         jointInstancer.GetPhysicsBody1IndicesAttr().Set(body1indices)
-#         jointInstancer.GetPhysicsLocalPos1sAttr().Set(localPos1)
-#         jointInstancer.GetPhysicsLocalRot1sAttr().Set(localRot1)
-
-#         return self._ropeScenePath,self._ropePrimPath
     
-#     def _createCapsule(self, path: Sdf.Path):
-#         capsuleGeom = UsdGeom.Capsule.Define(self._stage, path)
-#         capsuleGeom.CreateHeightAttr(self._linkHalfLength)
-#         capsuleGeom.CreateRadiusAttr(self._linkRadius)
-#         capsuleGeom.CreateAxisAttr("X")
-#         capsuleGeom.CreateDisplayColorAttr().Set([self._ropeColor])
+    def _createCapsule(self, path: Sdf.Path):
+        capsuleGeom = UsdGeom.Capsule.Define(self._stage, path)
+        capsuleGeom.CreateHeightAttr(self._linkHalfLength)
+        capsuleGeom.CreateRadiusAttr(self._linkRadius)
+        capsuleGeom.CreateAxisAttr("X")
+        capsuleGeom.CreateDisplayColorAttr().Set([self._ropeColor])
 
-#         UsdPhysics.CollisionAPI.Apply(capsuleGeom.GetPrim())
-#         UsdPhysics.RigidBodyAPI.Apply(capsuleGeom.GetPrim())
-#         massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
-#         massAPI.CreateDensityAttr().Set(self._density)
-#         physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
-#         physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
-#         physxCollisionAPI.CreateContactOffsetAttr().Set(self._contactOffset)
-#         physicsUtils.add_physics_material_to_prim(self._stage, capsuleGeom.GetPrim(), self._physicsMaterialPath)
+        UsdPhysics.CollisionAPI.Apply(capsuleGeom.GetPrim())
+        UsdPhysics.RigidBodyAPI.Apply(capsuleGeom.GetPrim())
+        massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
+        massAPI.CreateDensityAttr().Set(self._density)
+        physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
+        physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
+        physxCollisionAPI.CreateContactOffsetAttr().Set(self._contactOffset)
+        physicsUtils.add_physics_material_to_prim(self._stage, capsuleGeom.GetPrim(), self._physicsMaterialPath)
 
-#     def _createJoint(self, jointPath):        
-#         joint = UsdPhysics.Joint.Define(self._stage, jointPath)
+    def _createJoint(self, jointPath):        
+        joint = UsdPhysics.Joint.Define(self._stage, jointPath)
 
-#         # locked DOF (lock - low is greater than high)
-#         d6Prim = joint.GetPrim()
-#         limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transX")
-#         limitAPI.CreateLowAttr(1.0)
-#         limitAPI.CreateHighAttr(-1.0)
-#         limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transY")
-#         limitAPI.CreateLowAttr(1.0)
-#         limitAPI.CreateHighAttr(-1.0)
-#         limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transZ")
-#         limitAPI.CreateLowAttr(1.0)
-#         limitAPI.CreateHighAttr(-1.0)
-#         # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "rotX")
-#         # limitAPI.CreateLowAttr(1.0)
-#         # limitAPI.CreateHighAttr(-1.0)
+        # locked DOF (lock - low is greater than high)
+        d6Prim = joint.GetPrim()
+        limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transX")
+        limitAPI.CreateLowAttr(1.0)
+        limitAPI.CreateHighAttr(-1.0)
+        limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transY")
+        limitAPI.CreateLowAttr(1.0)
+        limitAPI.CreateHighAttr(-1.0)
+        limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transZ")
+        limitAPI.CreateLowAttr(1.0)
+        limitAPI.CreateHighAttr(-1.0)
+        # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "rotX")
+        # limitAPI.CreateLowAttr(1.0)
+        # limitAPI.CreateHighAttr(-1.0)
 
-#         # Moving DOF:
-#         dofs = ["rotX", "rotY", "rotZ"]
-#         for d in dofs:
-#             limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, d)
-#             limitAPI.CreateLowAttr(-self._coneAngleLimit)
-#             limitAPI.CreateHighAttr(self._coneAngleLimit)
+        # Moving DOF:
+        dofs = ["rotX", "rotY", "rotZ"]
+        for d in dofs:
+            limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, d)
+            limitAPI.CreateLowAttr(-self._coneAngleLimit)
+            limitAPI.CreateHighAttr(self._coneAngleLimit)
 
-#             # joint drives for rope dynamics:
-#             driveAPI = UsdPhysics.DriveAPI.Apply(d6Prim, d)
-#             driveAPI.CreateTypeAttr("force")
-#             driveAPI.CreateDampingAttr(self._rope_damping)
-#             driveAPI.CreateStiffnessAttr(self._rope_stiffness)
+            # joint drives for rope dynamics:
+            driveAPI = UsdPhysics.DriveAPI.Apply(d6Prim, d)
+            driveAPI.CreateTypeAttr("force")
+            driveAPI.CreateDampingAttr(self._rope_damping)
+            driveAPI.CreateStiffnessAttr(self._rope_stiffness)
 
 # TODO
 class RigidBodyRope_Factory():
@@ -1674,9 +1724,19 @@ class FollowTarget(tasks.FollowTarget):
             self._franka_robot_name = find_unique_string_name(
                 initial_name="my_franka", is_unique_fn=lambda x: not self.scene.object_exists(x)
             )
-        return Franka(prim_path=self._franka_prim_path, name=self._franka_robot_name, 
+        franka=Franka(prim_path=self._franka_prim_path, name=self._franka_robot_name, 
         position=self._franka_position,
         orientation=self._franka_orientation,
         gripper_open_position=self._franka_gripper_open_position,
         gripper_closed_position=self._franka_gripper_closed_position,
         deltas=self._franka_deltas,)
+        # see extscache\omni.importer.urdf-XXX.cp310\omni\importer\urdf\scripts\samples\import_franka.py
+        #   PhysxSchema.PhysxArticulationAPI.Get(stage, "/panda").CreateSolverPositionIterationCountAttr(64)
+        #   PhysxSchema.PhysxArticulationAPI.Get(stage, "/panda").CreateSolverVelocityIterationCountAttr(64)
+        # the urdf importer set it to 64, causing 
+        #   1) performance issue, that is 64 times too many calculations
+        #   2) franka explosion: only the base/root remains in the scene 
+        #       due to velocity accumulation if the target gripper position is unreachable, like inside a rigidbody/below groundplane
+        franka.set_solver_position_iteration_count(1)
+        franka.set_solver_velocity_iteration_count(0)
+        return franka
