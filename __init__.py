@@ -9,5 +9,23 @@
 
 # NOTE: Import here your extension examples to be propagated to ISAAC SIM Extensions startup
 from .franka_rope import IsaacUIUtils, VRUIUtils
-IsaacUIUtils.setUp()
+import os
+from omni.isaac.examples.base_sample import BaseSampleExtension
+
+class FrankaRopeExtension(BaseSampleExtension):
+    def on_startup(self, ext_id: str):
+        super().on_startup(ext_id)
+        super().start_extension(
+            menu_name="",
+            submenu_name="",
+            name="Franka Rope Ext",
+            title="Franka Rope Example",
+            doc_link="",
+            overview="",
+            file_path=os.path.abspath(__file__),
+            sample=IsaacUIUtils.setUp(),
+        )
+        return
+
+# IsaacUIUtils.setUp()
 # VRUIUtils.setUp()

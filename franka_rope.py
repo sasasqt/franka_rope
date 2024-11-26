@@ -127,7 +127,7 @@ class FrankaRope(BaseSample):
     # ~~BUT: Err set up scene:~~
     # ~~Cannot add the object target to the scene since its name is not unique~~
     # ~~slow and weird behaviour~~
-    def setup_scene(self) -> None:
+    def setup_scene(self,scene=None) -> None:
         world = self._world
         world.clear()
         
