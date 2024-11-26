@@ -31,8 +31,8 @@
 # quaternion is wxyz in isaacsim
 # c++ api headers are in kit\dev\fabric\include\usdrt\scenegraph\usd folder
 import carb
-from viztracer import VizTracer
-tracer = VizTracer(tracer_entries=99999999,output_file="my_trace.json")
+# from viztracer import VizTracer
+# tracer = VizTracer(tracer_entries=99999999,output_file="my_trace.json")
 
 from omni.isaac.examples.base_sample import BaseSample
 import numpy as np
@@ -734,6 +734,7 @@ class IsaacUIUtils(ControlFlow):
             # cls.tearDown()
             return # dont create ui window on hot reloading, also dont destroy exsiting window either
         async def _setUp_async(cls):
+            await omni.kit.app.get_app().next_update_async()
             await super().setUp_async()
             cls.bind_inputs()
             cls.ui_window = omni.ui.Window(window_name, width=300, height=300)
