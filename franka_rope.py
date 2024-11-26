@@ -144,12 +144,13 @@ class FrankaRope(BaseSample):
         # >>> Detected an articulation at /World/Franka with more than 4 velocity iterations being added to a TGS scene.The related behavior changed recently, please consult the changelog. <<<
         # AttributeError: 'Boost.Python.function' object has no attribute 'Set'
         physxSceneAPI.CreateMaxVelocityIterationCountAttr(4)
-        settings = carb.settings.get_settings()
-        # async rendering
-        # w/o if statement: re-run may freeze
-        if not settings.get("/app/asyncRendering"):
-            settings.set("/app/asyncRendering", True)
-            settings.set("/app/asyncRendering=false",False)
+        # otherwise rendering issue in linux
+        # settings = carb.settings.get_settings()
+        # # async rendering
+        # # w/o if statement: re-run may freeze
+        # if not settings.get("/app/asyncRendering"):
+        #     settings.set("/app/asyncRendering", True)
+        #     settings.set("/app/asyncRendering=false",False)
 
         self._franka_position={}
         self._franka_orientation={}
@@ -264,8 +265,11 @@ class FrankaRope(BaseSample):
             # gripper open/close immediately
             robot._gripper._action_deltas=None
 
+        # otherwise issue in linux
+        await world.reset_async()
+        await self._world.pause_async()
         self._align_targets()
-
+        
     async def _on_simulation_event_async(self, val,callback_fn=None):
         world = self._world
         if val:
