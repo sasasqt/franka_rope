@@ -100,7 +100,7 @@ class FrankaRope(BaseSample):
             "physics_dt": 1.0 / 60.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 60.0,
             "physics_prim_path": "/PhysicsScene", "sim_params":None, "set_defaults":True, "backend":"numpy","device":None
         }
-
+        self._eps=0.013
         return
         
     async def setup_pre_reset(self) -> None:
@@ -339,7 +339,7 @@ class FrankaRope(BaseSample):
             # right to left handed: xyz -> yxz coord
             # this is needed even for identity quaternion, TODO WHY?
             target_position=np.array([-_quat_pos[1],-_quat_pos[2],_quat_pos[3]])
-            
+            target_position[2]= max(self._eps, target_position[2])
             target_orientation=observations[self._target_name[_str]]["orientation"]
 
             axis,angle=self._q2aa(target_orientation)
@@ -425,6 +425,7 @@ class FrankaRope(BaseSample):
         current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if log_path is None:
             log_path=os.path.join(os.getcwd(), f"output_data_{current_time}.json")
+        print(f">>> log path: {log_path}")
         world = self._world
         data_logger = self.data_logger=world.get_data_logger()
         data_logger.save(log_path=log_path)
@@ -1146,7 +1147,7 @@ class VRUIUtils(ControlFlow):
                 # z axis should never below 0, better to use stage.get_stage_up_axis()-> str to determine up 
                 # but z is the default up axis, set by set_stage_up_axis() in simulation context.py
                 # dont follow it once it went below the ground
-                eps= 0.015
+                eps= self._eps
                 if target_pos[2]<=eps:
                     target_pos[2]=eps
                 if np.sum(np.abs(delta_pos)> np.finfo(np.dtype(delta_pos[0])).eps):
