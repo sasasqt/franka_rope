@@ -8,6 +8,7 @@
 # TODO rewrite the rigidbody rope class as articulation subclass???
 # TODO ~~dual robots~~, wheeled robots
 # TODO a better way to align cube with gripper orientation
+# TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
 # TODO tuning rope damping, stiffness etc
@@ -28,7 +29,8 @@
 # translation means coord w.r.t. local frame in omniverse
 # orientation depends on whether position or translation is used
 # Z is UP in isaacsim, but Y is UP in dynamic control, physx and unity!
-# quaternion is wxyz in isaacsim
+# unity is left handed, isaacsim is right handed
+# quaternion is wxyz in isaacsim, xyzw from simpub.xr_device.meta_quest3 vr_controller.get_input_data() 
 # c++ api headers are in kit\dev\fabric\include\usdrt\scenegraph\usd folder
 import carb
 # from viztracer import VizTracer
@@ -40,7 +42,7 @@ import numpy as np
 from omni.isaac.franka import KinematicsSolver 
 # from omni.isaac.franka.tasks import FollowTarget
 from omni.isaac.core.objects import VisualCuboid
-
+from omni.isaac.core.utils import prims
 from pxr import PhysxSchema
 
 # TODO ifdef vr: import them
@@ -61,6 +63,7 @@ from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_
 from omni.isaac.core.utils.prims import is_prim_path_valid
 from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.stage import get_stage_units
+
 from datetime import datetime
 
 # world is a SimulationContext subclass
@@ -100,7 +103,7 @@ class FrankaRope(BaseSample):
             "physics_dt": 1.0 / 60.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 60.0,
             "physics_prim_path": "/PhysicsScene", "sim_params":None, "set_defaults":True, "backend":"numpy","device":None
         }
-        self._eps=0.013
+        self._eps=0.014
         return
         
     async def setup_pre_reset(self) -> None:
@@ -171,8 +174,8 @@ class FrankaRope(BaseSample):
             franka_robot_name=f"{_str}_franka"
             franka_prim_path=f"/World/{franka_robot_name}"
             target_position=[0.2*idx-0.1, 0.0, 0.015]
-            self._franka_position[_str]=position=[0.0,0.5*idx-0.25,0.0]
-            self._franka_inverse_position[_str]=[0.0,-0.5*idx+0.25,0.0]
+            self._franka_position[_str]=position=[0.0,0.8*idx-0.4,0.0]
+            self._franka_inverse_position[_str]=[0.0,-0.8*idx+0.4,0.0]
 
             # rotate the left franka (left to the rope) by 180 around z: to make workspace easier
             # dont enter quaternion manually: euler_angles_to_quat for stability: eps/6.123234e-17 in [6.123234e-17 0.000000e+00 0.000000e+00 1.000000e+00]
@@ -190,7 +193,7 @@ class FrankaRope(BaseSample):
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
 
-        rope=self._rope=RigidBodyRope(world)
+        rope=self._rope=RigidBodyRope(_world=world)
         
         try:
             rope.deleteRope()
@@ -265,7 +268,9 @@ class FrankaRope(BaseSample):
             # gripper open/close immediately
             robot._gripper._action_deltas=None
 
-        # otherwise issue in linux
+        #rope_group.add_path()
+        #non_rope_group.add_path()
+        # otherwise no rendering in linux
         await world.reset_async()
         await self._world.pause_async()
         self._align_targets()
@@ -342,8 +347,8 @@ class FrankaRope(BaseSample):
             target_position[2]= max(self._eps, target_position[2])
             target_orientation=observations[self._target_name[_str]]["orientation"]
 
-            axis,angle=self._q2aa(target_orientation)
-            _angle=np.abs(self._q2aa(self._franka_orientation[_str])[1])
+            axis,angle=_q2aa(target_orientation)
+            _angle=np.abs(_q2aa(self._franka_orientation[_str])[1])
             # TODO a better way to align arbitrary rotations?
             # and to consider rotation > 180 degrees, and ccw cw
             # example: self._q2aa(euler_angles_to_quat(np.array([0.0,0.0,np.pi*1.5]))): (array([ 0.,  0., -1.]), 1.5707963267948968)
@@ -352,10 +357,10 @@ class FrankaRope(BaseSample):
                     pass # do nothing
                 elif 0.25<=self._ccw<0.75:
                     # for 90 deg rotation: (45-135)
-                    target_orientation=self._aa2q([axis[1],-axis[0],axis[2]],angle)
+                    target_orientation=_aa2q([axis[1],-axis[0],axis[2]],angle)
                 elif 0.75<=self._ccw<1.25:
                     # for 180 degree rotation: (135-225 degrees)
-                    target_orientation=self._aa2q([-axis[0],-axis[1],axis[2]],angle)
+                    target_orientation=_aa2q([-axis[0],-axis[1],axis[2]],angle)
                 else:  raise Exception("Not implemented yet")
 
             # compute_inverse_kinematics does not expect carb._carb.Float4 as inputs
@@ -433,32 +438,31 @@ class FrankaRope(BaseSample):
         if (callback_fn is not None):
             callback_fn()
 
-    def _q2aa(self, q):
-        # Z is UP in isaacsim, but Y is up in dynamic control, physx and unity!
-        q = q / np.linalg.norm(q)
-        w = q[0]
-        v = np.array([q[1], q[2], q[3]])
-        angle = 2 * np.arccos(w)
-        sin_half_angle = np.sqrt(1 - w**2)
-        if angle > np.pi:
-            angle = 2 * np.pi - angle
-            axis = -v / sin_half_angle
+
+def _q2aa( q):
+    # Z is UP in isaacsim, but Y is up in dynamic control, physx and unity!
+    q = q / np.linalg.norm(q)
+    w = q[0]
+    v = np.array([q[1], q[2], q[3]])
+    angle = 2 * np.arccos(w)
+    sin_half_angle = np.sqrt(1 - w**2)
+    if angle > np.pi:
+        angle = 2 * np.pi - angle
+        axis = -v / sin_half_angle
+    else:
+        if sin_half_angle < 1e-15:
+            axis = np.array([1.0, 0.0, 0.0])
         else:
-            if sin_half_angle < 1e-15:
-                axis = np.array([1.0, 0.0, 0.0])
-            else:
-                axis = v / sin_half_angle
-        return axis, angle
+            axis = v / sin_half_angle
+    return axis, angle
 
-    def _aa2q(self,axis, angle):
-        axis = axis / np.linalg.norm(axis)
-        half_angle = angle / 2
-        w = np.cos(half_angle)
-        xyz = axis * np.sin(half_angle)
-        # wxyz
-        return np.array([w, xyz[0], xyz[1], xyz[2]])
-
-
+def _aa2q(axis, angle):
+    axis = axis / np.linalg.norm(axis)
+    half_angle = angle / 2
+    w = np.cos(half_angle)
+    xyz = axis * np.sin(half_angle)
+    # wxyz
+    return np.array([w, xyz[0], xyz[1], xyz[2]])
 
 
 # the async ext utils for stage hot reload etc
@@ -879,12 +883,12 @@ class VRUIUtils(ControlFlow):
             world=cls._sample._world
             if (cls.publisher is None):
                 print(">>> INIT SIMPUBLISHER <<< ")
-                cls.publisher = IsaacSimPublisher(host="127.0.0.1", stage=world.stage) # for InteractiveScene
+                cls.publisher = IsaacSimPublisher(host="192.168.0.103", stage=world.stage) # for InteractiveScene
             # THE MetaQuest3 NAME MUST BE THE SAME AS IN THE CSHARP CODE
             if (cls.vr_controller is None):
                 print(">>> INIT META QUEST 3 <<< ")
-                # MetaQuest3 only works w/ isaac sim fabric backend
-                cls.vr_controller=vr_controller or MetaQuest3("UnityClient")
+                # MetaQuest3 only r w/ isaac sim fabric backend
+                cls.vr_controller=vr_controller or MetaQuest3("UnityClient")#MetaQuest3("ALRMetaQuest3")
                 # print(f"world is playing: {world.is_playing()}")
             super().on_simulation_button_event(False)
         super().on_simulation_button_event(True,callback_fn=partial(_init_publisher,cls,vr_controller))
@@ -971,12 +975,26 @@ class VRUIUtils(ControlFlow):
 
     @classmethod
     def register_zeroing_pose(cls):
-        input_data=cls.vr_controller.get_input_data()        
+        input_data=cls._get_input_data() # vr_controller.get_input_data()        
         cls.zeroing_pose(input_data)
 
+    # TODO this is not elegant! 
+    # either isaac simpublisher or irxr unity rotates the xy plane by 180 degrees, undo that rotation here
+    @classmethod
+    def _get_input_data(cls):
+        input_data={}
+        _input_data=cls.vr_controller.get_input_data()
+        input_data['left']=_input_data['right']
+        input_data['right']=_input_data['left']
+        input_data['X']=_input_data['X']
+        input_data['Y']=_input_data['Y']
+        input_data['A']=_input_data['A']
+        input_data['B']=_input_data['B']
+        return input_data
+    
     @classmethod
     def default_task(cls):
-        input_data=cls.vr_controller.get_input_data()
+        input_data=cls._get_input_data() # vr_controller.get_input_data()
         # print(input_data)
         cls.transform_target(input_data)
         cls.reset_press_states()
@@ -1000,8 +1018,8 @@ class VRUIUtils(ControlFlow):
         # 5. continue only if **none** of the above conditions meet: update pose and gripper action
         if cls.vr_controller is None:
             return
-        cls.old_input_data=cls.input_data or cls.vr_controller.get_input_data()
-        input_data = cls.input_data= cls.vr_controller.get_input_data()
+        cls.old_input_data=cls.input_data or cls._get_input_data() # vr_controller.get_input_data()
+        input_data = cls.input_data= cls._get_input_data() # vr_controller.get_input_data()
         if input_data is None:
             return
         if cls._sample is None:
@@ -1070,7 +1088,7 @@ class VRUIUtils(ControlFlow):
     @classmethod
     def _reset_pressed(cls, input_data):
         # input_data format from metaqust3 class
-        # # the rot from metaquest3 class is {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}
+        # # ~~the rot from metaquest3 class was {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}~~
         # {'left': {'pos': [1.0, 0.0, 0.0], 'rot': [0.0, 0.0, -1.0, 0.0], 'index_trigger': False, 'hand_trigger': False}, 
         # 'right': {'pos': [1.0, 0.0, 0.0], 'rot': [0.0, 0.0, -1.0, 0.0], 'index_trigger': False, 'hand_trigger': False}, 
         # 'A': False, 'B': False, 'X': False, 'Y': False}
@@ -1108,78 +1126,86 @@ class VRUIUtils(ControlFlow):
     @classmethod
     def transform_target(cls,input_data):
         #print(input_data is None)
-        async def _transform_target_async(cls,input_data):
-            if input_data is None:
-                return
+        #async def _transform_target_async(cls,input_data):
+        if input_data is None:
+            return
 
-            # print(cls._reposition_pressed(input_data))
-            # no pose update when holding the reposition button to relocate the followed target
-            if  cls._reposition_pressed(input_data):
-                cls.zeroing_pose(input_data)
-                return
+        if cls.old_input_pos is None or cls.old_input_rot is None:
+            cls.old_input_pos={}
+            cls.old_input_rot={}
+            cls.zeroing_pose(input_data)
+            return
+        
+        # print(cls._reposition_pressed(input_data))
+        # no pose update when holding the reposition button to relocate the followed target
+        if  cls._reposition_pressed(input_data):
+            cls.zeroing_pose(input_data)
+            return
 
-            if cls.old_input_pos is None or cls.old_input_rot is None:
-                cls.old_input_pos={}
-                cls.old_input_rot={}
-                cls.zeroing_pose(input_data)
-                return
-            
-            # print("--------")
-            for _str in ["Left","Right"]:
-                old_input_pos,old_input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str]
-                input_pos,input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str] = cls.get_pose(_str,input_data)
-                #print(f"input_pos is {input_pos}")
+        
+        # print("--------")
+        for _str in ["Left","Right"]:
+            old_input_pos,old_input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str]
+            input_pos,input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str] = cls.get_pose(_str,input_data)
+            #print(f"input_pos is {input_pos}")
 
-                # map the changes in vr controller to gripper pose via 4d quaternion
-                delta_pos=np.subtract(input_pos,old_input_pos)
-                delta_rot=mu.mul(input_rot,mu.inverse(old_input_rot)) # ~~the order is unclear in doc could be another way around~~
-                observations=cls._sample._world.get_observations()
-                old_target_pos,old_target_rot=observations[cls._sample._target_name[_str]]["position"],observations[cls._sample._target_name[_str]]["orientation"]
-                # target_pos=old_target_pos+delta_pos
-                target_pos=np.add(old_target_pos,delta_pos)
-                target_rot=mu.mul(delta_rot,old_target_rot)
-                # set params expects a scalar-first (w, x, y, z) quaternion
-                # the singe_prim_wrapper does not expect target pos/ori but delta!!! follow_target.py has to adapt
-                # ~~lul, isaac core modules are not compatible~~
-                # AsyncUtils._sample._task.set_params(target_position=target_pos,target_orientation=target_rot)
-                # AsyncUtils._sample._task.set_params(delta_pos,delta_rot)
+            # map the changes in vr controller to gripper pose via 4d quaternion
+            delta_pos=np.subtract(input_pos,old_input_pos)
 
-                # z axis should never below 0, better to use stage.get_stage_up_axis()-> str to determine up 
-                # but z is the default up axis, set by set_stage_up_axis() in simulation context.py
-                # dont follow it once it went below the ground
-                eps= self._eps
-                if target_pos[2]<=eps:
-                    target_pos[2]=eps
-                if np.sum(np.abs(delta_pos)> np.finfo(np.dtype(delta_pos[0])).eps):
-                    # print(_str)
-                    # print(f"input pos: {input_pos}")
-                    # print(f"delta pos: {delta_pos}")
-                    # print(f"old tgt pos: {old_target_pos}")
-                    # print(f"tgt pos: {target_pos}")
-                    cls._sample._target[_str].set_local_pose(translation=target_pos, orientation=target_rot) 
-            await update_stage_async()
-        asyncio.ensure_future(_transform_target_async(cls,input_data))
+            # make translation intuitive: align the motion of the vr controller with motion of gripper
+            delta_pos=np.array([-delta_pos[0],-delta_pos[1],delta_pos[2]])
+            delta_rot=mu.mul(input_rot,mu.inverse(old_input_rot)) # ~~the order is unclear in doc could be another way around~~
+
+            # make rotation intuitive, align with isaac sim gui
+            observations=cls._sample._world.get_observations()
+            old_target_pos,old_target_rot=observations[cls._sample._target_name[_str]]["position"],observations[cls._sample._target_name[_str]]["orientation"]
+            # target_pos=old_target_pos+delta_pos
+            target_pos=np.add(old_target_pos,delta_pos)
+            target_rot=mu.mul(delta_rot,old_target_rot)
+            # set params expects a scalar-first (w, x, y, z) quaternion
+            # the singe_prim_wrapper does not expect target pos/ori but delta!!! follow_target.py has to adapt
+            # ~~lul, isaac core modules are not compatible~~
+            # AsyncUtils._sample._task.set_params(target_position=target_pos,target_orientation=target_rot)
+            # AsyncUtils._sample._task.set_params(delta_pos,delta_rot)
+
+            # z axis should never below 0, better to use stage.get_stage_up_axis()-> str to determine up 
+            # but z is the default up axis, set by set_stage_up_axis() in simulation context.py
+            # dont follow it once it went below the ground
+            eps= cls._sample._eps
+            if target_pos[2]<=eps:
+                target_pos[2]=eps
+            if np.sum(np.abs(delta_pos)> np.finfo(np.dtype(delta_pos[0])).eps):
+                # print(_str)
+                # print(f"input pos: {input_pos}")
+                # print(f"delta pos: {delta_pos}")
+                # print(f"old tgt pos: {old_target_pos}")
+                # print(f"tgt pos: {target_pos}")
+                cls._sample._target[_str].set_local_pose(translation=target_pos, orientation=target_rot) 
+            #await update_stage_async()
+        #asyncio.ensure_future(_transform_target_async(cls,input_data))
 
     @classmethod
     def get_pose(cls,name,input_data):
         # rot is quaternion
-        # the rot from metaquest3 class is {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}
+        # ~~the rot from metaquest3 class was {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}~~
         # isaac sim expects {w, x, y, z} format
         # input_data format from metaqust3 class
-        # # the rot from metaquest3 class is {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}
+        # ~~# the rot from metaquest3 class was {-rightRot.z, rightRot.x, -rightRot.y, rightRot.w}~~
         # {'left': {'pos': [1.0, 0.0, 0.0], 'rot': [0.0, 0.0, -1.0, 0.0], 'index_trigger': False, 'hand_trigger': False}, 
         # 'right': {'pos': [1.0, 0.0, 0.0], 'rot': [0.0, 0.0, -1.0, 0.0], 'index_trigger': False, 'hand_trigger': False}, 
         # 'A': False, 'B': False, 'X': False, 'Y': False}
         try:
             q_xyzw=input_data[name.lower()]["rot"]
-            q_wxyz=np.array([q_xyzw[3],q_xyzw[0],q_xyzw[1],q_xyzw[2]])
+            # correct the handedness
+            q_wxyz=np.array([q_xyzw[3],-q_xyzw[0],-q_xyzw[1],q_xyzw[2]])
+            p_xyz=input_data[name.lower()]["pos"]
         except Exception as e:
             print(e)
             print(">>> above error likely due to metaquest3 was called before simulation is started <<<")
             # metaquest3.py returns none in the data :( the err: TypeError: cannot unpack non-iterable NoneType object
             # only if when it is inited before simulation ever started
             return
-        return input_data[name.lower()]["pos"],q_wxyz
+        return p_xyz,q_wxyz
 
     @classmethod    
     def tearDown(cls):
@@ -1214,6 +1240,7 @@ class RigidBodyRope:
     def __init__(
         self,
         _world,
+        _eps=0.005,
         _scene_name="RopeScene",
         _rope_name="Rope",
         _linkHalfLength=0.025,
@@ -1226,6 +1253,7 @@ class RigidBodyRope:
         _density=0.00005,
     ):
         self._world = _world
+        self._eps=_eps
         self._stage=_world.stage
         self._scene= _world.scene
         self._scene_name=_scene_name
@@ -1250,7 +1278,7 @@ class RigidBodyRope:
         material.CreateStaticFrictionAttr().Set(0.5)
         material.CreateDynamicFrictionAttr().Set(0.5)
         material.CreateRestitutionAttr().Set(0)
-    
+
         _world._rope=self
 
     def deleteRope(self):
@@ -1361,7 +1389,7 @@ class RigidBodyRope:
         massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
         massAPI.CreateDensityAttr().Set(self._density)
         physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
-        physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
+        physxCollisionAPI.CreateRestOffsetAttr().Set(self._eps)
         physxCollisionAPI.CreateContactOffsetAttr().Set(self._contactOffset)
         physicsUtils.add_physics_material_to_prim(self._stage, capsuleGeom.GetPrim(), self._physicsMaterialPath)
         
