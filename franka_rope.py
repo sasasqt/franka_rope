@@ -11,6 +11,8 @@
 # TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
+# TODO collisiongroup!
+# TODO make the defaultgroundplane invisible, and add a fake floor below
 # TODO tuning rope damping, stiffness etc
 # TODO rewrite isaacsimpublisher: to support openusd backend (maybe), to support visuals, to support rotations
 # TODO replay saved json (maybe)
@@ -103,7 +105,7 @@ class FrankaRope(BaseSample):
             "physics_dt": 1.0 / 60.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 60.0,
             "physics_prim_path": "/PhysicsScene", "sim_params":None, "set_defaults":True, "backend":"numpy","device":None
         }
-        self._eps=0.014
+        self._eps=-0.02
         return
         
     async def setup_pre_reset(self) -> None:
@@ -117,7 +119,11 @@ class FrankaRope(BaseSample):
 
     async def setup_post_reset(self):
         self._align_targets()
-
+        for idx,_str in enumerate(["Left","Right"]):    
+            robot=self._robot[_str]
+            # close the gripper properly 
+            robot._gripper.close()
+            
     def world_cleanup(self):
         try:
             del self._robot_articulation_solver
@@ -258,23 +264,79 @@ class FrankaRope(BaseSample):
             self._robot_articulation_solver[_str] = KinematicsSolver(robot)
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
 
-            # close the gripper properly 
-            robot._gripper.close()
-            _robot_dof=robot.num_dof
-            # In radians/s, or stage_units/s
-            max_vel = np.zeros(_robot_dof) + 4.0
-            max_vel[_robot_dof-1]=None # dont limit gripper
-            robot._articulation_view.set_max_joint_velocities(max_vel)
-            # gripper open/close immediately
-            robot._gripper._action_deltas=None
+            # # for rmpflow forward()
+            # _robot_dof=robot.num_dof
+            # # In radians/s, or stage_units/s
+            # max_vel = np.zeros(_robot_dof) #+ 2.0
+            # max_vel[_robot_dof-1]=None # dont limit gripper
+            # robot._articulation_view.set_max_joint_velocities(max_vel)
+            # # gripper open/close immediately
+            # robot._gripper._action_deltas=None
+
+        scene=world.scene
+        if scene.object_exists("default_ground_plane"):
+            default_ground_plane_prim=scene.get_object("default_ground_plane")
+            default_ground_plane_path=default_ground_plane_prim.prim_path
+            # offset the visual part of the ground plane
+            default_ground_plane_prim._xform_prim.set_default_state(position=[0,0,self._eps])
+        else:
+            carb.log_error(">>> default ground plane not yet added to the scene! <<<")
+
+
+        robot_path={}
+        for _str in ["Left","Right"]:
+            robot_path[_str]=scene.get_object(self._robot_name[_str]).prim_path
+
+
+        ground_plane_collision_group_path=find_unique_string_name(
+                initial_name="/World/ground_plane_collision_group", is_unique_fn=lambda x: not is_prim_path_valid(x)
+            )
+       
+        frankas_collision_group_path=find_unique_string_name(
+                initial_name="/World/frankas_collision_group", is_unique_fn=lambda x: not is_prim_path_valid(x)
+            )
+       
+        stage=world.stage
+        # create collision groups
+        ground_plane_collision_group = UsdPhysics.CollisionGroup.Define(stage, ground_plane_collision_group_path)
+        frankas_collision_group = UsdPhysics.CollisionGroup.Define(stage, frankas_collision_group_path)
+       
+        # dont allow ground plane collides w/ frankas
+        _filtered_rel = ground_plane_collision_group.CreateFilteredGroupsRel()
+        _filtered_rel.AddTarget(Sdf.Path(frankas_collision_group_path))
+
+
+        # ik does not consider usd obstacles
+        # dont allow frankas collide w/ self, each other, and ground plane
+        _filtered_rel = frankas_collision_group.CreateFilteredGroupsRel()
+        _filtered_rel.AddTarget(Sdf.Path(ground_plane_collision_group_path))
+        _filtered_rel.AddTarget(Sdf.Path(frankas_collision_group_path))
+
+
+        # add ground plane to the ground plane group
+        collectionAPI = Usd.CollectionAPI.Apply(ground_plane_collision_group.GetPrim(), "colliders")
+        collectionAPI.CreateIncludesRel().AddTarget(Sdf.Path(default_ground_plane_path))
+
+
+        # add frankas to franka group
+        collectionAPI = Usd.CollectionAPI.Apply(frankas_collision_group.GetPrim(), "colliders")
+        for _str in ["Left","Right"]:
+            collectionAPI.CreateIncludesRel().AddTarget(Sdf.Path(robot_path[_str]))
 
         #rope_group.add_path()
         #non_rope_group.add_path()
         # otherwise no rendering in linux
+
+        await update_stage_async()
         await world.reset_async()
+        await update_stage_async()
         await self._world.pause_async()
         self._align_targets()
-        
+        for idx,_str in enumerate(["Left","Right"]):    
+            robot=self._robot[_str]
+            # close the gripper properly 
+            robot._gripper.close()
+
     async def _on_simulation_event_async(self, val,callback_fn=None):
         world = self._world
         if val:
@@ -413,6 +475,8 @@ class FrankaRope(BaseSample):
                 _dict["Rope"]={ 
                         # rotation data is too large and unnecessary
                         "rope_world_position": rope.get_world_position(),
+                        "rope_world_rotation": rope.get_world_rotation(),
+                        
                     }
                 _dict["Datetime"]={"now":datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}
                 return _dict
@@ -1100,8 +1164,21 @@ class VRUIUtils(ControlFlow):
     
     @classmethod
     def _reposition_pressed(cls, input_data):
-        return input_data["A"]
+        # was A, but A is reserved in simpub/irxr unity
+        return input_data["left"]["hand_trigger"] or input_data["right"]["hand_trigger"]
     
+    @classmethod
+    def _left_reposition_pressed(cls, input_data):
+        # was A, but A is reserved in simpub/irxr unity
+        return input_data["left"]["hand_trigger"]
+    
+
+    @classmethod
+    def _right_reposition_pressed(cls, input_data):
+        # was A, but A is reserved in simpub/irxr unity
+        return input_data["right"]["hand_trigger"]
+    
+
     @classmethod
     def _simulation_pressed(cls, input_data):
         return not cls.old_input_data["B"] and input_data["B"]
@@ -1119,9 +1196,12 @@ class VRUIUtils(ControlFlow):
         cls.old_input_pos[name],cls.old_input_rot[name] = cls.get_pose(name, input_data)
 
     @classmethod
-    def zeroing_pose(cls, input_data):
-        for _str in ["Left","Right"]:
-            cls._zeroing_pose(_str,input_data)
+    def zeroing_pose(cls, input_data,name=None):
+        if name is None:
+            for _str in ["Left","Right"]:
+                cls._zeroing_pose(_str,input_data)
+        else:
+            cls._zeroing_pose(name,input_data)
 
     @classmethod
     def transform_target(cls,input_data):
@@ -1138,12 +1218,21 @@ class VRUIUtils(ControlFlow):
         
         # print(cls._reposition_pressed(input_data))
         # no pose update when holding the reposition button to relocate the followed target
-        if  cls._reposition_pressed(input_data):
-            cls.zeroing_pose(input_data)
-            return
+        # if  cls._reposition_pressed(input_data):
+        #     cls.zeroing_pose(input_data)
+        #     return
 
+        if  cls._left_reposition_pressed(input_data):
+            cls.zeroing_pose(input_data, "Left")
+            return
+        
+        if  cls._right_reposition_pressed(input_data):
+            cls.zeroing_pose(input_data, "Right")
+            return
+        
         
         # print("--------")
+        observations=cls._sample._world.get_observations()
         for _str in ["Left","Right"]:
             old_input_pos,old_input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str]
             input_pos,input_rot=cls.old_input_pos[_str],cls.old_input_rot[_str] = cls.get_pose(_str,input_data)
@@ -1157,7 +1246,9 @@ class VRUIUtils(ControlFlow):
             delta_rot=mu.mul(input_rot,mu.inverse(old_input_rot)) # ~~the order is unclear in doc could be another way around~~
 
             # make rotation intuitive, align with isaac sim gui
-            observations=cls._sample._world.get_observations()
+            axis,angle=_q2aa(delta_rot)
+            delta_rot=_aa2q([axis[0],-axis[1],-axis[2]],angle)
+
             old_target_pos,old_target_rot=observations[cls._sample._target_name[_str]]["position"],observations[cls._sample._target_name[_str]]["orientation"]
             # target_pos=old_target_pos+delta_pos
             target_pos=np.add(old_target_pos,delta_pos)
@@ -1240,12 +1331,11 @@ class RigidBodyRope:
     def __init__(
         self,
         _world,
-        _eps=0.005,
         _scene_name="RopeScene",
         _rope_name="Rope",
-        _linkHalfLength=0.025,
+        _linkHalfLength=0.02,
         _linkRadius=None,
-        _ropeLength=2.0,
+        _ropeLength=1.5,
         _rope_damping=10,
         _rope_stiffness=1.0,
         _coneAngleLimit=110,
@@ -1253,7 +1343,6 @@ class RigidBodyRope:
         _density=0.00005,
     ):
         self._world = _world
-        self._eps=_eps
         self._stage=_world.stage
         self._scene= _world.scene
         self._scene_name=_scene_name
@@ -1271,12 +1360,12 @@ class RigidBodyRope:
         UsdGeom.Scope.Define(_world.stage, self._scene_path)
 
         # physics options:
-        self._contactOffset = 2.0
+        self._contactOffset = 1.1*self._ropeLength
         self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
-        material.CreateStaticFrictionAttr().Set(0.5)
-        material.CreateDynamicFrictionAttr().Set(0.5)
+        material.CreateStaticFrictionAttr().Set(0.3)
+        material.CreateDynamicFrictionAttr().Set(0.3)
         material.CreateRestitutionAttr().Set(0)
 
         _world._rope=self
@@ -1311,7 +1400,6 @@ class RigidBodyRope:
 
     def get_local_position(self):
         local_positions=[]
-        local_orientations=[]
         for rigidPrim in self._capsules:
             # get_world_pose returns a tuple of np.array
             # tolist(): np.array not json serializable
@@ -1321,13 +1409,21 @@ class RigidBodyRope:
     
     def get_world_position(self):
         world_positions=[]
-        world_orientations=[]
         for rigidPrim in self._capsules:
             # get_world_pose returns a tuple of np.array
             # tolist(): np.array not json serializable
             _world_pose=rigidPrim.get_world_pose()
             world_positions.append(_world_pose[0].tolist())
         return world_positions
+    
+    def get_world_rotation(self):
+        world_rotations=[]
+        for rigidPrim in self._capsules:
+            # get_world_pose returns a tuple of np.array
+            # tolist(): np.array not json serializable
+            _world_pose=rigidPrim.get_world_pose()
+            world_rotations.append(_world_pose[1].tolist())
+        return world_rotations
     
     def createRope(self):
         linkLength = 2.0 * self._linkHalfLength - self._linkRadius
@@ -1353,13 +1449,14 @@ class RigidBodyRope:
             # Set transform for each capsule
             xformable = UsdGeom.Xformable(capsule)
             if linkInd == numLinks//2:
-                xformable.AddTranslateOp().Set(Gf.Vec3d(x+random.uniform(-0.2, 0.2), y, z+random.uniform(-0.2, 0.2)))
-                xformable.AddRotateXYZOp().Set(Gf.Vec3d(random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0)))
+                xformable.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
+                # xformable.AddTranslateOp().Set(Gf.Vec3d(x+random.uniform(-0.2, 0.2), y, z+random.uniform(-0.2, 0.2)))
+                # xformable.AddRotateXYZOp().Set(Gf.Vec3d(random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0)))
             else:
                 xformable.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
             capsules.append(capsulePath)
             self._capsules.append(RigidPrim(capsulePath.pathString))
-            
+
         # Create joints between capsules
         jointX = self._linkHalfLength - 0.5 * self._linkRadius
         for linkInd in range(numLinks - 1):
@@ -1389,7 +1486,7 @@ class RigidBodyRope:
         massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
         massAPI.CreateDensityAttr().Set(self._density)
         physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
-        physxCollisionAPI.CreateRestOffsetAttr().Set(self._eps)
+        physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
         physxCollisionAPI.CreateContactOffsetAttr().Set(self._contactOffset)
         physicsUtils.add_physics_material_to_prim(self._stage, capsuleGeom.GetPrim(), self._physicsMaterialPath)
         
@@ -1452,7 +1549,7 @@ class RigidBodyRope_withpointinstancer:
         UsdGeom.Scope.Define(_world.stage, self._scene_path)
 
         # physics options:
-        self._contactOffset = 2.0
+        self._contactOffset = 0.02
         self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
