@@ -7,8 +7,8 @@
             - the code should enable this ext automatically
         - unity w/ Meta XR All-in-One SDK
         - extra: meta xr simulator(unity) for running on PC
-        - https://github.com/intuitive-robots/IRXR-Unity/tree/meta-quest3-dev to run on meta quest
-        - and https://github.com/intuitive-robots/SimPublisher/tree/isaacsim to communicate with meta quest over tcp protocol
+        - https://github.com/intuitive-robots/SimPublisher main branch or `c267192` to run on meta quest
+        - and https://github.com/intuitive-robots/SimPublisher main branch or `bc84848` to communicate with meta quest over tcp protocol
             - install simpublisher (as editable)
                 ```
                 cd OMNIVERSE_ISAACSIM_PATH
@@ -61,17 +61,42 @@ weird **bugs** in isaac sim/omniverse
 # misc
 ## install isaac-sim on a remote (linux) workstation
 :: login and local port forwarding
+
 `ssh USERNAME@HOSTIP -L 8211:localhost:8211 -L 49100:localhost:49100`
 
 :: install micromamba / conda first
+
 `conda install conda-forge::apptainer`
 
 :: check the newest version: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-sim/tags
+
 `apptainer build isaac-sim.sif docker://nvcr.io/nvidia/isaac-sim:4.2.0`
 
 `export APPTAINERENV_ACCEPT_EULA="Y"`
+
 `apptainer exec --nv isaac-sim.sif bash`
+
 `/isaac-sim/isaac-sim.headless.webrtc.sh`
+
+
+
+```
+git clone -b isaacsim https://github.com/intuitive-robots/SimPublisher.git
+conda install conda-forge::vulkan-tools 
+apptainer build --force --sandbox isaac-sim.sif docker://nvcr.io/nvidia/isaac-sim:4.2.0
+apptainer shell --writable isaac-sim.sif
+ln -s "/PATH_TO/franka_rope" "/isaac-sim/exts/omni.isaac.examples/omni/isaac/examples/user_examples/franka_rope"
+cd /isaac-sim/exts/omni.isaac.examples/omni/isaac/examples/user_examples
+echo 'from .franka_rope import *' >> __init__.py
+cd /isaac-sim
+./python.sh -m pip install zmq trimesh colorama
+./python.sh -m pip install -e "PATH_TO/SimPublisher"
+
+exit
+
+apptainer exec --nv isaac-sim.sif /isaac-sim/isaac-sim.sh
+:: lower fps due to error `Could not get NGX parameters block because NGX isn't enabled.`
+```
 
 :: now open browser on the local machine
 :: dont use localhost: kit-player.js has issue with http://localhost, it sometimes treats it as a secured connection and demands a token
@@ -81,9 +106,8 @@ weird **bugs** in isaac sim/omniverse
 
 `http://127.0.0.1:8211/streaming/webrtc-demo/?server=127.0.0.1`
 
----
-
 :: alternatively to use native steaming client
+
 `/isaac-sim/isaac-sim.headless.native.sh`
 
 :: install omniverse streaming client from omniverse launcher
