@@ -195,7 +195,7 @@ class FrankaRope(BaseSample):
 
             task_name=f"{_str}_follow_target_task"
             task = FollowTarget(name=task_name, target_prim_path=_target_prim_path,target_name=_target_name,target_position=target_position,target_orientation=target_orientation,franka_prim_path=franka_prim_path,franka_robot_name=franka_robot_name,
-                                franka_position=position, franka_orientation=orientation
+                                franka_position=position, franka_orientation=orientation,franka_gripper_closed_position=[-0.3,-0.3]
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
 
@@ -447,7 +447,7 @@ class FrankaRope(BaseSample):
         self._old_observations=observations
 
 
-    def _on_logging_event_async(self, val,callback_fn=None):
+    def _on_logging_event(self, val,callback_fn=None,extras_fn=None):
         world = self._world
         
         self.data_logger = data_logger = world.get_data_logger()
@@ -478,6 +478,8 @@ class FrankaRope(BaseSample):
                         "rope_world_rotation": rope.get_world_rotation(),
                         
                     }
+                if extras_fn is not None:
+                    _dict["extras"]=extras_fn()
                 _dict["Datetime"]={"now":datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}
                 return _dict
 
@@ -741,14 +743,14 @@ class ControlFlow:
         asyncio.ensure_future(_on_gripper_action_button_event_async(cls,name,open,callback_fn))
 
     @classmethod
-    def on_logging_button_event(cls, logging=None,callback_fn=None):
+    def on_logging_button_event(cls, logging=None,callback_fn=None,extras_fn=None):
         val=cls.buttons["Start Logging"].get_state_and_flip()
         if logging is None:
             logging=val
         else:
             cls.buttons["Start Logging"].get_or_set_state(logging)
         assert (logging == val)
-        cls._sample._on_logging_event_async(logging,callback_fn)
+        cls._sample._on_logging_event(logging,callback_fn,extras_fn)
 
     @classmethod
     def on_save_data_button_event(cls,callback_fn=None):
@@ -1116,7 +1118,7 @@ class VRUIUtils(ControlFlow):
             cls.already_pressed["Follow Target"]=True
             val=cls.buttons["Follow Target"].get_or_set_state()
             if val:
-                super().on_logging_button_event(True)
+                super().on_logging_button_event(True,extras_fn=cls._extras_logging)
                 cls._request_zeroing_pose()
             else:
                 super().on_save_data_button_event()
@@ -1178,7 +1180,12 @@ class VRUIUtils(ControlFlow):
         # was A, but A is reserved in simpub/irxr unity
         return input_data["right"]["hand_trigger"]
     
-
+    @classmethod
+    def _extras_logging(cls):
+        input_data= cls._get_input_data()
+        return {"left_reposition_pressed":cls._left_reposition_pressed(input_data),
+                "right_reposition_pressed":cls._right_reposition_pressed(input_data)
+                }
     @classmethod
     def _simulation_pressed(cls, input_data):
         return not cls.old_input_data["B"] and input_data["B"]
@@ -1224,11 +1231,9 @@ class VRUIUtils(ControlFlow):
 
         if  cls._left_reposition_pressed(input_data):
             cls.zeroing_pose(input_data, "Left")
-            return
         
         if  cls._right_reposition_pressed(input_data):
             cls.zeroing_pose(input_data, "Right")
-            return
         
         
         # print("--------")
@@ -1246,8 +1251,8 @@ class VRUIUtils(ControlFlow):
             delta_rot=mu.mul(input_rot,mu.inverse(old_input_rot)) # ~~the order is unclear in doc could be another way around~~
 
             # make rotation intuitive, align with isaac sim gui
-            axis,angle=_q2aa(delta_rot)
-            delta_rot=_aa2q([axis[0],-axis[1],-axis[2]],angle)
+            # axis,angle=_q2aa(delta_rot)
+            # delta_rot=_aa2q([axis[0],-axis[1],-axis[2]],angle)
 
             old_target_pos,old_target_rot=observations[cls._sample._target_name[_str]]["position"],observations[cls._sample._target_name[_str]]["orientation"]
             # target_pos=old_target_pos+delta_pos
@@ -1288,7 +1293,7 @@ class VRUIUtils(ControlFlow):
         try:
             q_xyzw=input_data[name.lower()]["rot"]
             # correct the handedness
-            q_wxyz=np.array([q_xyzw[3],-q_xyzw[0],-q_xyzw[1],q_xyzw[2]])
+            q_wxyz=np.array([q_xyzw[3],-q_xyzw[0],q_xyzw[1],-q_xyzw[2]])
             p_xyz=input_data[name.lower()]["pos"]
         except Exception as e:
             print(e)
@@ -1333,9 +1338,9 @@ class RigidBodyRope:
         _world,
         _scene_name="RopeScene",
         _rope_name="Rope",
-        _linkHalfLength=0.02,
+        _linkHalfLength=0.026,
         _linkRadius=None,
-        _ropeLength=1.5,
+        _ropeLength=1.6,
         _rope_damping=10,
         _rope_stiffness=1.0,
         _coneAngleLimit=110,
@@ -1364,15 +1369,15 @@ class RigidBodyRope:
         self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
-        material.CreateStaticFrictionAttr().Set(0.3)
-        material.CreateDynamicFrictionAttr().Set(0.3)
+        material.CreateStaticFrictionAttr().Set(0.7)
+        material.CreateDynamicFrictionAttr().Set(0.7)
         material.CreateRestitutionAttr().Set(0)
 
         _world._rope=self
 
     def deleteRope(self):
-        if is_prim_path_valid(self._scene_name):
-            prims_utils.delete_prim(self._scene_name)
+        if is_prim_path_valid(self._rope_path):
+            prims_utils.delete_prim(self._rope_path)
         del self._capsules
         self._capsules=[]
 
