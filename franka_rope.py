@@ -11,12 +11,12 @@
 # TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
+# TODO replay saved json (maybe)
+# TODO air drag/friction
 # TODO to refactor... again...
 # TODO rmpflow?
 # TODO change the gripper stl! and rope thickness
-# TODO tuning rope damping, stiffness etc
 # TODO rewrite isaacsimpublisher: to support openusd backend (maybe), to support visuals, to support rotations
-# TODO replay saved json (maybe)
 # TODO omniverse extension on shutdown/hot reloading: cleanup 
 
 # To launch
@@ -1028,18 +1028,19 @@ class VRUIUtils(ControlFlow):
     @classmethod
     def pre_physics_callback(cls,step_size):
         with lock:
-            if cls._requested_zeroing_pose():
-                cls.register_zeroing_pose()
+            try:
+                if cls._requested_zeroing_pose():
+                    cls.register_zeroing_pose()
+                    cls._zeroing=False
+            except:
+                # the input is none, 
+                pass
         cls.default_task()
 
     @classmethod
     def _requested_zeroing_pose(cls):
-        if cls._zeroing:
-            cls._zeroing=False
-            return True
-        else:
-            return False
-
+        return cls._zeroing
+            
     @classmethod
     def _request_zeroing_pose(cls):
         cls._zeroing=True
@@ -1298,8 +1299,9 @@ class VRUIUtils(ControlFlow):
         try:
             q_xyzw=input_data[name.lower()]["rot"]
             # correct the handedness
-            q_wxyz=np.array([q_xyzw[3],-q_xyzw[1],-q_xyzw[0],-q_xyzw[2]])
+            # q_wxyz=np.array([q_xyzw[3],-q_xyzw[1],-q_xyzw[0],-q_xyzw[2]])
             # q_wxyz=np.array([q_xyzw[3],q_xyzw[1],q_xyzw[0],-q_xyzw[2]])
+            q_wxyz=np.array([q_xyzw[3],-q_xyzw[0],q_xyzw[1],-q_xyzw[2]])
 
             p_xyz=input_data[name.lower()]["pos"]
         except Exception as e:
@@ -1348,10 +1350,10 @@ class RigidBodyRope:
         _rope_name="Rope",
         _linkHalfLength=0.018, 
         _linkRadius=None, #0.013,
-        _ropeLength=1.1,
-        _rope_damping=10,
-        _rope_stiffness=1.0,
-        _coneAngleLimit=100,
+        _ropeLength=1.0,
+        _rope_damping=0.6, # lower the better, otherwise: bump in the rope
+        _rope_stiffness=0.1, # lower: rope like, higher: rigid line
+        _coneAngleLimit=140,
         _ropeColor=None,
         _density=None, # 0.000000000000005,
         _randomize=False,
@@ -1383,8 +1385,8 @@ class RigidBodyRope:
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
         material.CreateStaticFrictionAttr().Set(0.4) # 1.0
-        material.CreateDynamicFrictionAttr().Set(0.2) # 0.1
-        material.CreateRestitutionAttr().Set(0.1) # just be alittle bouncy
+        material.CreateDynamicFrictionAttr().Set(0.1) # 0.1
+        material.CreateRestitutionAttr().Set(0.001) # just be alittle bouncy
 
         _world._rope=self
 
@@ -1579,7 +1581,7 @@ class RigidBodyRope:
 
             # Add joint drives
             driveAPI = UsdPhysics.DriveAPI.Apply(d6Prim, axis)
-            driveAPI.CreateTypeAttr("force")
+            driveAPI.CreateTypeAttr("acceleration") # better than force
             driveAPI.CreateDampingAttr(self._rope_damping)
             driveAPI.CreateStiffnessAttr(self._rope_stiffness)
 
@@ -1597,7 +1599,7 @@ class RigidBodyRope_withpointinstancer:
         _ropeLength=2.0,
         _rope_damping=10,
         _rope_stiffness=1.0,
-        _coneAngleLimit=130,
+        _coneAngleLimit=100,
         _ropeColor=None,
         _density=0.00005,
     ):
