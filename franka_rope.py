@@ -11,8 +11,9 @@
 # TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
-# TODO rmpflow
-# TODO change the gripper stl and rope thickness
+# TODO to refactor... again...
+# TODO rmpflow?
+# TODO change the gripper stl! and rope thickness
 # TODO tuning rope damping, stiffness etc
 # TODO rewrite isaacsimpublisher: to support openusd backend (maybe), to support visuals, to support rotations
 # TODO replay saved json (maybe)
@@ -115,9 +116,10 @@ class FrankaRope(BaseSample):
         if world.physics_callback_exists("sim_step"):
             world.remove_physics_callback("sim_step")
         # self._robot_articulation_solver.reset()
-        return
 
     async def setup_post_reset(self):
+        rope=self._rope
+        rope.post_reset()
         self._align_targets()
         for idx,_str in enumerate(["Left","Right"]):    
             robot=self._robot[_str]
@@ -466,11 +468,15 @@ class FrankaRope(BaseSample):
                             .joint_positions.tolist(),
                         f"{_str}_end_effector_world_position":scene.get_object(robot_name).end_effector.get_world_pose()[0].tolist(),
                         f"{_str}_end_effector_world_rotation":scene.get_object(robot_name).end_effector.get_world_pose()[1].tolist(),
+                        f"{_str}_end_effector_local_position":scene.get_object(robot_name).end_effector.get_local_pose()[0].tolist(),
+                        f"{_str}_end_effector_local_rotation":scene.get_object(robot_name).end_effector.get_local_pose()[1].tolist(),
                         
                         # f"{_str}_target_local_position": scene.get_object(target_name).get_local_pose()[0].tolist(),
                         # f"{_str}_target_local_rotation": scene.get_object(target_name).get_local_pose()[1].tolist(),
                         f"{_str}_target_world_position": scene.get_object(target_name).get_world_pose()[0].tolist(),
                         f"{_str}_target_world_rotation": scene.get_object(target_name).get_world_pose()[1].tolist(),
+                        f"{_str}_target_local_position": scene.get_object(target_name).get_local_pose()[0].tolist(),
+                        f"{_str}_target_local_rotation": scene.get_object(target_name).get_local_pose()[1].tolist(),
                     }
                 _dict["Rope"]={ 
                         # rotation data is too large and unnecessary
@@ -1021,29 +1027,27 @@ class VRUIUtils(ControlFlow):
 
     @classmethod
     def pre_physics_callback(cls,step_size):
-        # if cls._requested_zeroing_pose():
-        #     cls.register_zeroing_pose()
-        # else:
-        #     cls.default_task()
+        with lock:
+            if cls._requested_zeroing_pose():
+                cls.register_zeroing_pose()
         cls.default_task()
 
-    # @classmethod
-    # def _requested_zeroing_pose(cls):
-    #     with lock:
-    #         if cls._zeroing:
-    #             cls._zeroing=False
-    #             return True
-    #         else:
-    #             return False
+    @classmethod
+    def _requested_zeroing_pose(cls):
+        if cls._zeroing:
+            cls._zeroing=False
+            return True
+        else:
+            return False
 
-    # @classmethod
-    # def _request_zeroing_pose(cls):
-    #     cls._zeroing=False
+    @classmethod
+    def _request_zeroing_pose(cls):
+        cls._zeroing=True
 
-    # @classmethod
-    # def register_zeroing_pose(cls):
-    #     input_data=cls._get_input_data() # vr_controller.get_input_data()        
-    #     cls.zeroing_pose(input_data)
+    @classmethod
+    def register_zeroing_pose(cls):
+        input_data=cls._get_input_data() # vr_controller.get_input_data()        
+        cls.zeroing_pose(input_data)
 
     # TODO this is not elegant! 
     # either isaac simpublisher or irxr unity rotates the xy plane by 180 degrees, undo that rotation here
@@ -1097,7 +1101,7 @@ class VRUIUtils(ControlFlow):
             cls.already_pressed["Stop(Reset)"]=True
             # ~~TODO discard logging~~ 
             #   no need to worry: sample reset() also reset logger
-            # cls._request_zeroing_pose()
+            cls._request_zeroing_pose()
             _onFinish=lambda: print("vibrate") # vibrate # TODO 
             def _onFinish(cls):
                 async def _onFinish_async(cls):
@@ -1110,8 +1114,8 @@ class VRUIUtils(ControlFlow):
             cls.reset_press_states()
             cls.already_pressed["Simulation"]=True
             val=cls.buttons["Simulation"].get_or_set_state()
-            # if val:
-            #     cls._request_zeroing_pose()                
+            if val:
+                cls._request_zeroing_pose()                
             super().on_simulation_button_event(val,cls.reset_press_states)
             return
         
@@ -1120,7 +1124,7 @@ class VRUIUtils(ControlFlow):
             val=cls.buttons["Follow Target"].get_or_set_state()
             if val:
                 super().on_logging_button_event(True,extras_fn=cls._extras_logging)
-                # cls._request_zeroing_pose()
+                cls._request_zeroing_pose()
             else:
                 super().on_save_data_button_event()
                 pass
@@ -1294,7 +1298,9 @@ class VRUIUtils(ControlFlow):
         try:
             q_xyzw=input_data[name.lower()]["rot"]
             # correct the handedness
-            q_wxyz=np.array([q_xyzw[3],-q_xyzw[0],q_xyzw[1],-q_xyzw[2]])
+            q_wxyz=np.array([q_xyzw[3],-q_xyzw[1],-q_xyzw[0],-q_xyzw[2]])
+            # q_wxyz=np.array([q_xyzw[3],q_xyzw[1],q_xyzw[0],-q_xyzw[2]])
+
             p_xyz=input_data[name.lower()]["pos"]
         except Exception as e:
             print(e)
@@ -1330,6 +1336,7 @@ from omni.physx.scripts import physicsUtils, utils
 import omni.isaac.core.utils.stage as stage_utils
 import omni.isaac.core.utils.prims as prims_utils
 from omni.isaac.core.prims import RigidPrim
+# from omni.isaac.core.articulations import Articulation
 
 import random
 # based on extsphysics\omni.physx.demos\omni\physxdemos\scenes\RigidBodyRopesDemo.py
@@ -1339,14 +1346,14 @@ class RigidBodyRope:
         _world,
         _scene_name="RopeScene",
         _rope_name="Rope",
-        _linkHalfLength=0.026,
-        _linkRadius=None,
-        _ropeLength=1.4,
+        _linkHalfLength=0.018, 
+        _linkRadius=None, #0.013,
+        _ropeLength=1.2,
         _rope_damping=10,
         _rope_stiffness=1.0,
         _coneAngleLimit=100,
         _ropeColor=None,
-        _density=0.00005,
+        _density=None # 0.000000000000005,
     ):
         self._world = _world
         self._stage=_world.stage
@@ -1355,7 +1362,7 @@ class RigidBodyRope:
         self._rope_name=_rope_name
         self._scene_path=f"/World/{_scene_name}" #stage_utils.get_next_free_path(f"/World/{name}")
         self._linkHalfLength = _linkHalfLength
-        self._linkRadius = _linkRadius or 0.5 * self._linkHalfLength
+        self._linkRadius = _linkRadius or 0.75 * self._linkHalfLength
         self._ropeLength = _ropeLength
         self._rope_damping = _rope_damping
         self._rope_stiffness = _rope_stiffness
@@ -1363,16 +1370,17 @@ class RigidBodyRope:
         self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
         self._density = _density
         self._capsules=[]
+        self._default_state={}
         UsdGeom.Scope.Define(_world.stage, self._scene_path)
 
         # physics options:
-        self._contactOffset = 1.1*self._ropeLength
+        self._contactOffset = 0.01
         self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
-        material.CreateStaticFrictionAttr().Set(0.7)
-        material.CreateDynamicFrictionAttr().Set(0.7)
-        material.CreateRestitutionAttr().Set(0)
+        material.CreateStaticFrictionAttr().Set(0.4) # 1.0
+        material.CreateDynamicFrictionAttr().Set(0.2) # 0.1
+        material.CreateRestitutionAttr().Set(0.1) # just be alittle bouncy
 
         _world._rope=self
 
@@ -1380,7 +1388,9 @@ class RigidBodyRope:
         if is_prim_path_valid(self._rope_path):
             prims_utils.delete_prim(self._rope_path)
         del self._capsules
+        del self._default_state
         self._capsules=[]
+        self._default_state={}
 
     def get_world_pose(self):
         world_positions=[]
@@ -1430,7 +1440,19 @@ class RigidBodyRope:
             _world_pose=rigidPrim.get_world_pose()
             world_rotations.append(_world_pose[1].tolist())
         return world_rotations
-    
+
+    def post_reset(self):
+        # TODO to investigate why the default post_reset() does not reset to the default state
+        for rigidPrim in self._capsules:
+            default=rigidPrim.get_default_state()
+            position=default.position
+            orientation=default.orientation
+            rigidPrim.set_world_pose(position=position,orientation=orientation)
+            # isaac-sim-4.2.0/exts/omni.isaac.core/omni/isaac/core/utils/numpy/tensor.py", line 60, in tensor_cat
+            #     return np.concatenate(data, axis=dim)
+            # ValueError: zero-dimensional arrays cannot be concatenated
+            # rigidPrim.post_reset()
+
     def createRope(self):
         linkLength = 2.0 * self._linkHalfLength - self._linkRadius
         numLinks = int(self._ropeLength / linkLength)
@@ -1439,15 +1461,17 @@ class RigidBodyRope:
         _rope_name=self._rope_name
         self._rope_path=xformPath=stage_utils.get_next_free_path(_rope_name, self._scene_path)
         UsdGeom.Xform.Define(self._stage, xformPath)
+        # self._rope=XFormPrim(xformPath)
         # # register to the scene # TODO as articulation subclass??
-        #self._scene.add(XFormPrim(prim_path=self._scene_path,name=_rope_name))
-        y = 0.0
+        # self._scene.add(self._rope)
+        y = -0.05
         z = 0.5
     
         # Create individual capsules 
         # current impl of phy fabric does not support pointinstancer
         capsules = []
         self._capsules=[]
+        default_state=self._default_state={}
         for linkInd in range(numLinks):
             x = xStart + linkInd * linkLength
             capsulePath = Sdf.Path(xformPath).AppendChild(f"capsule_{linkInd}")
@@ -1455,13 +1479,25 @@ class RigidBodyRope:
             # Set transform for each capsule
             xformable = UsdGeom.Xformable(capsule)
             if linkInd == numLinks//2:
-                xformable.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
+                position=Gf.Vec3d(x, y, z)
+                orientation=Gf.Vec3d(0,0,0)
                 # xformable.AddTranslateOp().Set(Gf.Vec3d(x+random.uniform(-0.2, 0.2), y, z+random.uniform(-0.2, 0.2)))
                 # xformable.AddRotateXYZOp().Set(Gf.Vec3d(random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0)))
             else:
-                xformable.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
+                position=Gf.Vec3d(x, y, z)
+                orientation=Gf.Vec3d(0,0,0)
+            xformable.AddTranslateOp().Set(position)
+            # TODO >>> omni.hydra.scene_delegate.plugin] cannot find xform op xformOp:rotateXYZ for /World/RopeScene/Rope/capsule_
+            # this warning can be safely ignored, the orientation is set despite this warning
+            rotation_op=xformable.AddRotateXYZOp().Set(orientation)
+            default_state[linkInd]={
+                'position':position,
+                'orientation':orientation,
+            }
             capsules.append(capsulePath)
-            self._capsules.append(RigidPrim(capsulePath.pathString))
+            _capsule_prim=RigidPrim(capsulePath.pathString)
+            self._capsules.append(_capsule_prim)
+            _capsule_prim.set_default_state(position=[x,y,z])
 
         # Create joints between capsules
         jointX = self._linkHalfLength - 0.5 * self._linkRadius
@@ -1478,6 +1514,8 @@ class RigidBodyRope:
             joint.CreateLocalPos1Attr().Set(Gf.Vec3f(-jointX, 0, 0))
             joint.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
             joint.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
+            # PhysxSchema.PhysxJointAPI.Apply(joint.GetPrim()).CreateJointFrictionAttr().Set(0.001) # NEW! #joint friction only works in articulation
+
 
     def _createCapsule(self, path: Sdf.Path):
         capsuleGeom = UsdGeom.Capsule.Define(self._stage, path)
@@ -1490,7 +1528,7 @@ class RigidBodyRope:
         UsdPhysics.CollisionAPI.Apply(capsuleGeom.GetPrim())
         UsdPhysics.RigidBodyAPI.Apply(capsuleGeom.GetPrim())
         massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
-        massAPI.CreateDensityAttr().Set(self._density)
+        # massAPI.CreateDensityAttr().Set(self._density) # TODO BUG ?
         physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
         physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
         physxCollisionAPI.CreateContactOffsetAttr().Set(self._contactOffset)
@@ -1534,7 +1572,7 @@ class RigidBodyRope_withpointinstancer:
         _ropeLength=2.0,
         _rope_damping=10,
         _rope_stiffness=1.0,
-        _coneAngleLimit=110,
+        _coneAngleLimit=130,
         _ropeColor=None,
         _density=0.00005,
     ):
@@ -1559,8 +1597,8 @@ class RigidBodyRope_withpointinstancer:
         self._physicsMaterialPath = Sdf.Path(self._scene_path).AppendChild("RopePhysicsMaterial")
         UsdShade.Material.Define(self._stage, self._physicsMaterialPath)
         material = UsdPhysics.MaterialAPI.Apply(self._stage.GetPrimAtPath(self._physicsMaterialPath))
-        material.CreateStaticFrictionAttr().Set(0.5)
-        material.CreateDynamicFrictionAttr().Set(0.5)
+        material.CreateStaticFrictionAttr().Set(0.4)
+        material.CreateDynamicFrictionAttr().Set(0.1)
         material.CreateRestitutionAttr().Set(0)
     
     def deleteRope(self):

@@ -59,6 +59,11 @@ weird **bugs** in isaac sim/omniverse
 - for reproducibility: test the code after cleaning the cache + data
 
 # misc
+## speed up dev
+test the snippet code via 
+- vs code extension in omniverse isaac sim and isaac sim extension in vscode
+- the builtin script editor in isaac sim
+
 ## install isaac-sim on a remote (linux) workstation
 :: login and local port forwarding
 
