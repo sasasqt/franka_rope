@@ -11,8 +11,8 @@
 # TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
-# TODO collisiongroup!
-# TODO make the defaultgroundplane invisible, and add a fake floor below
+# TODO rmpflow
+# TODO change the gripper stl and rope thickness
 # TODO tuning rope damping, stiffness etc
 # TODO rewrite isaacsimpublisher: to support openusd backend (maybe), to support visuals, to support rotations
 # TODO replay saved json (maybe)
@@ -264,14 +264,14 @@ class FrankaRope(BaseSample):
             self._robot_articulation_solver[_str] = KinematicsSolver(robot)
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
 
-            # # for rmpflow forward()
-            # _robot_dof=robot.num_dof
-            # # In radians/s, or stage_units/s
-            # max_vel = np.zeros(_robot_dof) #+ 2.0
-            # max_vel[_robot_dof-1]=None # dont limit gripper
-            # robot._articulation_view.set_max_joint_velocities(max_vel)
-            # # gripper open/close immediately
-            # robot._gripper._action_deltas=None
+            # for rmpflow forward()
+            _robot_dof=robot.num_dof
+            # In radians/s, or stage_units/s
+            max_vel = np.zeros(_robot_dof) + 1.0
+            max_vel[_robot_dof-1]=None # dont limit gripper
+            robot._articulation_view.set_max_joint_velocities(max_vel)
+            # gripper open/close immediately
+            robot._gripper._action_deltas=None
 
         scene=world.scene
         if scene.object_exists("default_ground_plane"):
@@ -1021,28 +1021,29 @@ class VRUIUtils(ControlFlow):
 
     @classmethod
     def pre_physics_callback(cls,step_size):
-        if cls._requested_zeroing_pose():
-            cls.register_zeroing_pose()
-        else:
-            cls.default_task()
+        # if cls._requested_zeroing_pose():
+        #     cls.register_zeroing_pose()
+        # else:
+        #     cls.default_task()
+        cls.default_task()
 
-    @classmethod
-    def _requested_zeroing_pose(cls):
-        with lock:
-            if cls._zeroing:
-                cls._zeroing=False
-                return True
-            else:
-                return False
+    # @classmethod
+    # def _requested_zeroing_pose(cls):
+    #     with lock:
+    #         if cls._zeroing:
+    #             cls._zeroing=False
+    #             return True
+    #         else:
+    #             return False
 
-    @classmethod
-    def _request_zeroing_pose(cls):
-        cls._zeroing=False
+    # @classmethod
+    # def _request_zeroing_pose(cls):
+    #     cls._zeroing=False
 
-    @classmethod
-    def register_zeroing_pose(cls):
-        input_data=cls._get_input_data() # vr_controller.get_input_data()        
-        cls.zeroing_pose(input_data)
+    # @classmethod
+    # def register_zeroing_pose(cls):
+    #     input_data=cls._get_input_data() # vr_controller.get_input_data()        
+    #     cls.zeroing_pose(input_data)
 
     # TODO this is not elegant! 
     # either isaac simpublisher or irxr unity rotates the xy plane by 180 degrees, undo that rotation here
@@ -1096,7 +1097,7 @@ class VRUIUtils(ControlFlow):
             cls.already_pressed["Stop(Reset)"]=True
             # ~~TODO discard logging~~ 
             #   no need to worry: sample reset() also reset logger
-            cls._request_zeroing_pose()
+            # cls._request_zeroing_pose()
             _onFinish=lambda: print("vibrate") # vibrate # TODO 
             def _onFinish(cls):
                 async def _onFinish_async(cls):
@@ -1109,8 +1110,8 @@ class VRUIUtils(ControlFlow):
             cls.reset_press_states()
             cls.already_pressed["Simulation"]=True
             val=cls.buttons["Simulation"].get_or_set_state()
-            if val:
-                cls._request_zeroing_pose()                
+            # if val:
+            #     cls._request_zeroing_pose()                
             super().on_simulation_button_event(val,cls.reset_press_states)
             return
         
@@ -1119,7 +1120,7 @@ class VRUIUtils(ControlFlow):
             val=cls.buttons["Follow Target"].get_or_set_state()
             if val:
                 super().on_logging_button_event(True,extras_fn=cls._extras_logging)
-                cls._request_zeroing_pose()
+                # cls._request_zeroing_pose()
             else:
                 super().on_save_data_button_event()
                 pass
@@ -1340,10 +1341,10 @@ class RigidBodyRope:
         _rope_name="Rope",
         _linkHalfLength=0.026,
         _linkRadius=None,
-        _ropeLength=1.6,
+        _ropeLength=1.4,
         _rope_damping=10,
         _rope_stiffness=1.0,
-        _coneAngleLimit=110,
+        _coneAngleLimit=100,
         _ropeColor=None,
         _density=0.00005,
     ):
