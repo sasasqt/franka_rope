@@ -201,7 +201,7 @@ class FrankaRope(BaseSample):
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
 
-        rope=self._rope=RigidBodyRope(_world=world)
+        rope=self._rope=RigidBodyRope(_world=world,_randomize=True,_randomize_on_reset=True)
         
         try:
             rope.deleteRope()
@@ -1337,8 +1337,8 @@ import omni.isaac.core.utils.stage as stage_utils
 import omni.isaac.core.utils.prims as prims_utils
 from omni.isaac.core.prims import RigidPrim
 # from omni.isaac.core.articulations import Articulation
+import itertools, random
 
-import random
 # based on extsphysics\omni.physx.demos\omni\physxdemos\scenes\RigidBodyRopesDemo.py
 class RigidBodyRope:
     def __init__(
@@ -1348,12 +1348,14 @@ class RigidBodyRope:
         _rope_name="Rope",
         _linkHalfLength=0.018, 
         _linkRadius=None, #0.013,
-        _ropeLength=1.2,
+        _ropeLength=1.1,
         _rope_damping=10,
         _rope_stiffness=1.0,
         _coneAngleLimit=100,
         _ropeColor=None,
-        _density=None # 0.000000000000005,
+        _density=None, # 0.000000000000005,
+        _randomize=False,
+        _randomize_on_reset=False,
     ):
         self._world = _world
         self._stage=_world.stage
@@ -1369,6 +1371,8 @@ class RigidBodyRope:
         self._coneAngleLimit = _coneAngleLimit
         self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
         self._density = _density
+        self._randomize=_randomize
+        self._randomize_on_reset=_randomize_on_reset
         self._capsules=[]
         self._default_state={}
         UsdGeom.Scope.Define(_world.stage, self._scene_path)
@@ -1441,9 +1445,35 @@ class RigidBodyRope:
             world_rotations.append(_world_pose[1].tolist())
         return world_rotations
 
+    def _to_randomize(self,x=None,y=None,z=None):
+        x=x or self.x
+        y=y or self.y
+        z=z or self.z
+        nums = list(itertools.chain(
+            range(-2,0),
+            range(0,2)
+            ))
+        pos_offset=random.choices(nums, k=3)
+        nums = list(itertools.chain(
+            range(-180,-90),
+            range(90,180)
+            ))
+        angles=random.choices(nums, k=3)
+        position=Gf.Vec3d(x+pos_offset[0]/10, y+pos_offset[1]/10, z+pos_offset[2]/10)
+        orientation=Gf.Vec3d(angles[0],angles[1],angles[2])
+        return position, orientation
+    
     def post_reset(self):
         # TODO to investigate why the default post_reset() does not reset to the default state
-        for rigidPrim in self._capsules:
+        for linkInd, rigidPrim in enumerate(self._capsules):
+            if self._randomize_on_reset:
+                linkInd=len(self._capsules)//2
+                linkLength=self._linkLength
+                xStart=self._xStart
+                x = xStart + linkInd * linkLength
+                position,orientation=self._to_randomize(x)
+                self._capsules[linkInd].set_default_state(position=list(position),orientation=euler_angles_to_quat(list(orientation)))
+            
             default=rigidPrim.get_default_state()
             position=default.position
             orientation=default.orientation
@@ -1454,9 +1484,9 @@ class RigidBodyRope:
             # rigidPrim.post_reset()
 
     def createRope(self):
-        linkLength = 2.0 * self._linkHalfLength - self._linkRadius
+        self._linkLength = linkLength = 2.0 * self._linkHalfLength - self._linkRadius
         numLinks = int(self._ropeLength / linkLength)
-        xStart = -numLinks * linkLength * 0.5
+        self._xStart = xStart = -numLinks * linkLength * 0.5
 
         _rope_name=self._rope_name
         self._rope_path=xformPath=stage_utils.get_next_free_path(_rope_name, self._scene_path)
@@ -1464,23 +1494,22 @@ class RigidBodyRope:
         # self._rope=XFormPrim(xformPath)
         # # register to the scene # TODO as articulation subclass??
         # self._scene.add(self._rope)
-        y = -0.05
-        z = 0.5
-    
+        self.y=y = -0.05
+        self.z=z = 0.5
+        self.x=0.0
+
         # Create individual capsules 
         # current impl of phy fabric does not support pointinstancer
         capsules = []
         self._capsules=[]
-        default_state=self._default_state={}
         for linkInd in range(numLinks):
             x = xStart + linkInd * linkLength
             capsulePath = Sdf.Path(xformPath).AppendChild(f"capsule_{linkInd}")
             capsule = self._createCapsule(capsulePath)
             # Set transform for each capsule
             xformable = UsdGeom.Xformable(capsule)
-            if linkInd == numLinks//2:
-                position=Gf.Vec3d(x, y, z)
-                orientation=Gf.Vec3d(0,0,0)
+            if self._randomize:
+                position,orientation=self._to_randomize(x,y,z)   
                 # xformable.AddTranslateOp().Set(Gf.Vec3d(x+random.uniform(-0.2, 0.2), y, z+random.uniform(-0.2, 0.2)))
                 # xformable.AddRotateXYZOp().Set(Gf.Vec3d(random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0),random.uniform(-180.0, 180.0)))
             else:
@@ -1490,14 +1519,10 @@ class RigidBodyRope:
             # TODO >>> omni.hydra.scene_delegate.plugin] cannot find xform op xformOp:rotateXYZ for /World/RopeScene/Rope/capsule_
             # this warning can be safely ignored, the orientation is set despite this warning
             rotation_op=xformable.AddRotateXYZOp().Set(orientation)
-            default_state[linkInd]={
-                'position':position,
-                'orientation':orientation,
-            }
             capsules.append(capsulePath)
             _capsule_prim=RigidPrim(capsulePath.pathString)
             self._capsules.append(_capsule_prim)
-            _capsule_prim.set_default_state(position=[x,y,z])
+            _capsule_prim.set_default_state(position=list(position),orientation=euler_angles_to_quat(list(orientation)))
 
         # Create joints between capsules
         jointX = self._linkHalfLength - 0.5 * self._linkRadius
