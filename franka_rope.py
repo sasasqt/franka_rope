@@ -343,6 +343,11 @@ class FrankaRope(BaseSample):
 
     async def _on_replay_recording_event_async(self, data_file,callback_fn=None):
         world=self._world
+        if not self._PhysicsScene.GetPrim().IsActive():
+            self._PhysicsScene.GetPrim().SetActive(True)
+            await world.reset_async()
+            await world.pause_async()
+    
         if world.physics_callback_exists("sim_step"):
             world.remove_physics_callback("sim_step")
         if world.physics_callback_exists("replay_recording"):
@@ -495,15 +500,15 @@ class FrankaRope(BaseSample):
                 orientations=np.array(data_frame.data["Rope"]["Rope_world_orientation"]),
             )
         else:
-            # if not self._PhysicsScene.GetPrim().IsActive():
-            #     self._PhysicsScene.GetPrim().SetActive(True)
-            #     async def _reset_async(world):
-            #         await world.reset_async()
-            #         await world.pause_async()
-            #     asyncio.ensure_future(_reset_async(world))
-            # else:
-            #     asyncio.ensure_future(world.pause_async())
-            asyncio.ensure_future(world.pause_async())
+            if not self._PhysicsScene.GetPrim().IsActive():
+                self._PhysicsScene.GetPrim().SetActive(True)
+                async def _reset_async(world):
+                    await world.reset_async()
+                    await world.pause_async()
+                asyncio.ensure_future(_reset_async(world))
+            else:
+                asyncio.ensure_future(world.pause_async())
+            # asyncio.ensure_future(world.pause_async())
             if world.physics_callback_exists("replay_recording"):
                 world.remove_physics_callback("replay_recording")
         return
