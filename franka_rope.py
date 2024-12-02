@@ -673,8 +673,6 @@ class ControlFlow:
     def reset_buttons(cls,callback_fn=None):
         for name,button in cls.buttons.items():
             cls.buttons[name].default()
-        if button in cls.isaac_buttons:
-            button["ui_button"].enabled=True
         if (callback_fn is not None):
             callback_fn()
 
