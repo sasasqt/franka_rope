@@ -11,7 +11,7 @@
 # TODO rewrite rope in omni.isaac.core way
 
 # NEXT 
-# TODO replay saved json (maybe)
+# TODO maybe to disable physics, rigidbodyapi and colliders for replay????
 # TODO air drag/friction
 # TODO to refactor... again...
 # TODO rmpflow?
@@ -112,7 +112,8 @@ class FrankaRope(BaseSample):
     async def setup_pre_reset(self) -> None:
         world = self._world
         self._init_vars()
-
+        if world.physics_callback_exists("replay_recording"):
+            world.remove_physics_callback("replay_recording")
         if world.physics_callback_exists("sim_step"):
             world.remove_physics_callback("sim_step")
         # self._robot_articulation_solver.reset()
@@ -143,7 +144,7 @@ class FrankaRope(BaseSample):
         world.clear()
         
         # PhysX error: The application needs to increase PxGpuDynamicsMemoryConfig::foundLostAggregatePairsCapacity to 1101
-        PhysicsScene = world.stage.GetPrimAtPath("/PhysicsScene")
+        self._PhysicsScene=PhysicsScene = world.stage.GetPrimAtPath("/PhysicsScene")
         physxSceneAPI = PhysxSchema.PhysxSceneAPI.Apply(PhysicsScene)
         physxSceneAPI.CreateGpuFoundLostAggregatePairsCapacityAttr().Set(10 * 1024)
    
@@ -250,6 +251,7 @@ class FrankaRope(BaseSample):
         robot = self._robot={}
         self._robot_articulation_solver={}
         self._robot_articulation_controller={}
+        self._data_logger  = world.get_data_logger()
 
         for idx,_str in enumerate(["Left","Right"]):    
             task=self._task[_str]=world.get_task(f"{_str}_follow_target_task")
@@ -339,6 +341,19 @@ class FrankaRope(BaseSample):
             # close the gripper properly 
             robot._gripper.close()
 
+    async def _on_replay_recording_event_async(self, data_file,callback_fn=None):
+        world=self._world
+        if world.physics_callback_exists("sim_step"):
+            world.remove_physics_callback("sim_step")
+        if world.physics_callback_exists("replay_recording"):
+            world.remove_physics_callback("replay_recording")
+        data_logger= self._data_logger
+        data_logger.load(log_path=data_file)
+        await world.play_async()
+        world.add_physics_callback("replay_recording", partial(self._on_replay_recording_step,time_offset=world.current_time_step_index))
+        if (callback_fn is not None):
+            callback_fn()
+
     async def _on_simulation_event_async(self, val,callback_fn=None):
         world = self._world
         if val:
@@ -352,6 +367,14 @@ class FrankaRope(BaseSample):
     async def _on_follow_target_event_async(self, val,callback_fn=None):
         world = self._world
         if val:
+            # if not self._PhysicsScene.GetPrim().IsActive():
+            #     self._PhysicsScene.GetPrim().SetActive(True)
+            #     await world.reset_async()
+            #     await omni.kit.app.get_app().next_update_async()
+            if world.physics_callback_exists("replay_recording"):
+                world.remove_physics_callback("replay_recording")
+            if world.physics_callback_exists("sim_step"):
+                world.remove_physics_callback("sim_step")
             await world.play_async()
             world.add_physics_callback("sim_step", self._on_physics_callback)
         else:
@@ -448,7 +471,43 @@ class FrankaRope(BaseSample):
 
         self._old_observations=observations
 
-
+    def _on_replay_recording_step(self, step_size, time_offset=0):
+        world=self._world
+        data_logger=self._data_logger
+        rope=self._rope
+        if world.current_time_step_index-time_offset < data_logger.get_num_of_data_frames():
+            if self._PhysicsScene.GetPrim().IsActive():
+                # disable the PhysicsScene to for fps
+                self._PhysicsScene.GetPrim().SetActive(False)
+            for idx,_str in enumerate(["Left","Right"]):  
+                robot_name = self._robot_name[_str]
+                target_name = self._target_name[_str]
+                data_frame = data_logger.get_data_frame(data_frame_index=world.current_time_step_index-time_offset)
+                world.scene.get_object(robot_name).set_joint_positions(
+                    np.array(data_frame.data[_str][f"{_str}_joint_positions"])
+                )
+                world.scene.get_object(target_name).set_world_pose(
+                    position=np.array(data_frame.data[_str][f"{_str}_target_world_position"]),
+                    orientation=np.array(data_frame.data[_str][f"{_str}_target_world_orientation"])
+                )
+            rope.set_world_pose(
+                positions=np.array(data_frame.data["Rope"]["Rope_world_position"]),
+                orientations=np.array(data_frame.data["Rope"]["Rope_world_orientation"]),
+            )
+        else:
+            # if not self._PhysicsScene.GetPrim().IsActive():
+            #     self._PhysicsScene.GetPrim().SetActive(True)
+            #     async def _reset_async(world):
+            #         await world.reset_async()
+            #         await world.pause_async()
+            #     asyncio.ensure_future(_reset_async(world))
+            # else:
+            #     asyncio.ensure_future(world.pause_async())
+            asyncio.ensure_future(world.pause_async())
+            if world.physics_callback_exists("replay_recording"):
+                world.remove_physics_callback("replay_recording")
+        return
+    
     def _on_logging_event(self, val,callback_fn=None,extras_fn=None):
         world = self._world
         
@@ -467,22 +526,21 @@ class FrankaRope(BaseSample):
                             .get_applied_action()
                             .joint_positions.tolist(),
                         f"{_str}_end_effector_world_position":scene.get_object(robot_name).end_effector.get_world_pose()[0].tolist(),
-                        f"{_str}_end_effector_world_rotation":scene.get_object(robot_name).end_effector.get_world_pose()[1].tolist(),
+                        f"{_str}_end_effector_world_orientation":scene.get_object(robot_name).end_effector.get_world_pose()[1].tolist(),
                         f"{_str}_end_effector_local_position":scene.get_object(robot_name).end_effector.get_local_pose()[0].tolist(),
-                        f"{_str}_end_effector_local_rotation":scene.get_object(robot_name).end_effector.get_local_pose()[1].tolist(),
+                        f"{_str}_end_effector_local_orientation":scene.get_object(robot_name).end_effector.get_local_pose()[1].tolist(),
                         
                         # f"{_str}_target_local_position": scene.get_object(target_name).get_local_pose()[0].tolist(),
-                        # f"{_str}_target_local_rotation": scene.get_object(target_name).get_local_pose()[1].tolist(),
+                        # f"{_str}_target_local_orientation": scene.get_object(target_name).get_local_pose()[1].tolist(),
                         f"{_str}_target_world_position": scene.get_object(target_name).get_world_pose()[0].tolist(),
-                        f"{_str}_target_world_rotation": scene.get_object(target_name).get_world_pose()[1].tolist(),
+                        f"{_str}_target_world_orientation": scene.get_object(target_name).get_world_pose()[1].tolist(),
                         f"{_str}_target_local_position": scene.get_object(target_name).get_local_pose()[0].tolist(),
-                        f"{_str}_target_local_rotation": scene.get_object(target_name).get_local_pose()[1].tolist(),
+                        f"{_str}_target_local_orientation": scene.get_object(target_name).get_local_pose()[1].tolist(),
                     }
                 _dict["Rope"]={ 
-                        # rotation data is too large and unnecessary
-                        "rope_world_position": rope.get_world_position(),
-                        "rope_world_rotation": rope.get_world_rotation(),
-                        
+                        # ~~orientation data is too large and unnecessary~~ it makes replay easier
+                        "Rope_world_position": rope.get_world_pose()[0], #rope.get_world_position(),
+                        "Rope_world_orientation": rope.get_world_pose()[1],
                     }
                 if extras_fn is not None:
                     _dict["extras"]=extras_fn()
@@ -498,7 +556,7 @@ class FrankaRope(BaseSample):
         if (callback_fn is not None):
             callback_fn()
 
-    def _on_save_data_event_async(self, log_path=None,callback_fn=None):
+    def _on_save_data_event(self, log_path=None,callback_fn=None):
         current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if log_path is None:
             log_path=os.path.join(os.getcwd(), f"output_data_{current_time}.json")
@@ -604,6 +662,7 @@ class ControlFlow:
         "Right Gripper Action": ["to open", "to close"],
         "Start Logging": ["to begin", "to stop"],
         "Save Data": ["save"],
+        "Replay Recording": ["replay"],
     }
 
     @classmethod
@@ -614,6 +673,8 @@ class ControlFlow:
     def reset_buttons(cls,callback_fn=None):
         for name,button in cls.buttons.items():
             cls.buttons[name].default()
+        if button in cls.isaac_buttons:
+            button["ui_button"].enabled=True
         if (callback_fn is not None):
             callback_fn()
 
@@ -760,9 +821,11 @@ class ControlFlow:
 
     @classmethod
     def on_save_data_button_event(cls,callback_fn=None):
-        cls._sample._on_save_data_event_async(callback_fn)
+        cls._sample._on_save_data_event(callback_fn)
 
-
+    @classmethod
+    def on_replay_recording_button_event(cls,datafile,callback_fn=None):
+        asyncio.ensure_future(cls._sample._on_replay_recording_event_async(datafile,callback_fn))
 
 # singleton
 # all UI related
@@ -844,9 +907,25 @@ class IsaacUIUtils(ControlFlow):
         for name,dict in cls.isaac_buttons.items():
             if "b_text" in dict:
                 cls.isaac_buttons[name]["ui_button"].text=cls.buttons[name].current_state.upper() # omniverse buttons are in CAP
+        cls._enable_ui_button_text()
 
     @classmethod
+    def _enable_ui_button_text(cls, to_enable=None):
+        if to_enable is None:
+            to_enable=cls.isaac_buttons.keys()
+        for name in to_enable:
+            cls.isaac_buttons[name]["ui_button"].enabled=True
+        for name,dict in cls.isaac_buttons.items():
+            if name not in to_enable:
+                cls.isaac_buttons[name]["ui_button"].enabled=False
+        
+    @classmethod
     def build_buttons(cls):
+        def _on_replay_recording_button_event():
+            to_enable=["(Re)load", "Replay Recording"]
+            cls._enable_ui_button_text(to_enable=to_enable)
+            cls.on_replay_recording_button_event(datafile=cls._Recording_To_Replay.get_value_as_string())
+    
         _callback_fn=cls._update_ui_button_text
         _on_reload=partial(super().on_reload,callback_fn=_callback_fn)
         _on_reset=partial(super().on_reset,callback_fn=_callback_fn)
@@ -867,6 +946,7 @@ class IsaacUIUtils(ControlFlow):
             "Right Gripper Action": _on_right_gripper_action_button_event,
             "Start Logging": _on_logging_button_event,
             "Save Data": super().on_save_data_button_event,
+            "Replay Recording":_on_replay_recording_button_event,
         }
         
         dicts={}
@@ -898,19 +978,20 @@ class IsaacUIUtils(ControlFlow):
                     if "b_text" in dict:
                         _btn=state_btn_builder(**dict)
                         _btn.enabled=True
-                        cls.isaac_buttons[name]["ui_button"]=_btn
                     else:
-                        btn_builder(**dict)
-                # dict = {
-                #     "label": "Output Directory",
-                #     "type": "stringfield",
-                #     "default_val": os.path.join(os.getcwd(), "OUTPUT PATH.json"),
-                #     "tooltip": "Output Directory",
-                #     "on_clicked_fn": None,
-                #     "use_folder_picker": False,
-                #     "read_only": False,
-                # }
-                # str_builder(**dict)
+                        _btn=btn_builder(**dict)
+                    cls.isaac_buttons[name]["ui_button"]=_btn
+
+                dict = {
+                    "label": "Recording To Replay",
+                    "type": "stringfield",
+                    "default_val": os.path.join(os.getcwd(), "SAVED_DATA.json"),
+                    "tooltip": "Output Directory",
+                    "on_clicked_fn": None,
+                    "use_folder_picker": True,
+                    "read_only": False,
+                }
+                cls._Recording_To_Replay=str_builder(**dict)
 
 
 
@@ -1438,14 +1519,20 @@ class RigidBodyRope:
             world_positions.append(_world_pose[0].tolist())
         return world_positions
     
-    def get_world_rotation(self):
-        world_rotations=[]
+    def get_world_orientation(self):
+        world_orientations=[]
         for rigidPrim in self._capsules:
             # get_world_pose returns a tuple of np.array
             # tolist(): np.array not json serializable
             _world_pose=rigidPrim.get_world_pose()
-            world_rotations.append(_world_pose[1].tolist())
-        return world_rotations
+            world_orientations.append(_world_pose[1].tolist())
+        return world_orientations
+
+    def set_world_pose(self,positions=None,orientations=None):
+        for i,rigidPrim in enumerate(self._capsules):
+            position = None if positions is None else positions[i]
+            orientation = None if orientations is None else orientations[i]
+            rigidPrim.set_world_pose(position=position,orientation=orientation)
 
     def _to_randomize(self,x=None,y=None,z=None):
         x=x or self.x
