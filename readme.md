@@ -59,6 +59,27 @@ weird **bugs** in isaac sim/omniverse
 - for reproducibility: test the code after cleaning the cache + data
 
 # misc
+## running with no omniverse launcher
+install isaac-sim via micromamba + pip:
+prepend the following to `franka_rope\__init__.py`
+
+```
+from isaacsim import SimulationApp
+simulation_app = SimulationApp({"headless": False})
+
+from omni.isaac.core.utils.extensions import enable_extension
+enable_extension("omni.isaac.examples")
+
+import nest_asyncio
+nest_asyncio.apply()
+```
+
+and also postpend the following:
+```
+while simulation_app.is_running():
+    simulation_app.update()
+simulation_app.close()
+```
 ## speed up dev
 test the snippet code via 
 - vs code extension in omniverse isaac sim and isaac sim extension in vscode
