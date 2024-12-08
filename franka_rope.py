@@ -66,6 +66,7 @@ from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_
 from omni.isaac.core.utils.prims import is_prim_path_valid
 from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.stage import get_stage_units
+from omni.isaac.core.utils.types import ArticulationAction
 
 from datetime import datetime
 
@@ -488,9 +489,13 @@ class FrankaRope(BaseSample):
                 robot_name = self._robot_name[_str]
                 target_name = self._target_name[_str]
                 data_frame = data_logger.get_data_frame(data_frame_index=world.current_time_step_index-time_offset)
-                world.scene.get_object(robot_name).set_joint_positions(
-                    np.array(data_frame.data[_str][f"{_str}_joint_positions"])
-                )
+                if idx == 0:
+                    world.scene.get_object(robot_name).set_joint_positions(
+                        np.array(data_frame.data[_str][f"{_str}_joint_positions"])
+                    )
+                else:
+                    world.scene.get_object(robot_name).apply_action(ArticulationAction(joint_positions=np.array(data_frame.data[_str]["applied_joint_positions"])))
+                
                 world.scene.get_object(target_name).set_world_pose(
                     position=np.array(data_frame.data[_str][f"{_str}_target_world_position"]),
                     orientation=np.array(data_frame.data[_str][f"{_str}_target_world_orientation"])
@@ -500,14 +505,15 @@ class FrankaRope(BaseSample):
                 orientations=np.array(data_frame.data["Rope"]["Rope_world_orientation"]),
             )
         else:
-            if not self._PhysicsScene.GetPrim().IsActive():
-                self._PhysicsScene.GetPrim().SetActive(True)
-                async def _reset_async(world):
-                    await world.reset_async()
-                    await world.pause_async()
-                asyncio.ensure_future(_reset_async(world))
-            else:
-                asyncio.ensure_future(world.pause_async())
+            asyncio.ensure_future(world.pause_async())
+            # if not self._PhysicsScene.GetPrim().IsActive():
+            #     self._PhysicsScene.GetPrim().SetActive(True)
+            #     async def _reset_async(world):
+            #         await world.reset_async()
+            #         await world.pause_async()
+            #     asyncio.ensure_future(_reset_async(world))
+            # else:
+            #     asyncio.ensure_future(world.pause_async())
             # asyncio.ensure_future(world.pause_async())
             if world.physics_callback_exists("replay_recording"):
                 world.remove_physics_callback("replay_recording")
@@ -1092,12 +1098,12 @@ class VRUIUtils(ControlFlow):
             cls.init_publisher()
 
             loop = asyncio.get_event_loop()
-            await asyncio.to_thread(partial(cls.ui_demon,loop))
+            await asyncio.to_thread(partial(cls.ui_daemon,loop))
         asyncio.ensure_future(_setUp_async(cls,vr_controller))
 
     # an async listening demon running in another thread
     @classmethod
-    def ui_demon(cls,loop):
+    def ui_daemon(cls,loop):
         asyncio.set_event_loop(loop)
         while True:
             start = time.time()
@@ -1183,9 +1189,11 @@ class VRUIUtils(ControlFlow):
         
         if cls._reset_pressed(input_data) and not cls.already_pressed["Stop(Reset)"]:
             cls.reset_press_states()
+            try:
+                cls._sample.data_logger.reset()
+            except:
+                pass
             cls.already_pressed["Stop(Reset)"]=True
-            # ~~TODO discard logging~~ 
-            #   no need to worry: sample reset() also reset logger
             cls._request_zeroing_pose()
             _onFinish=lambda: print("vibrate") # vibrate # TODO 
             def _onFinish(cls):

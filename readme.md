@@ -70,7 +70,7 @@ simulation_app = SimulationApp({"headless": False})
 from omni.isaac.core.utils.extensions import enable_extension
 enable_extension("omni.isaac.examples")
 
-import nest_asyncio
+import nest_asyncio # conda/pip installs it first
 nest_asyncio.apply()
 ```
 
@@ -79,6 +79,12 @@ and also postpend the following:
 while simulation_app.is_running():
     simulation_app.update()
 simulation_app.close()
+```
+
+to run
+```
+micromamba activate isaac-sim_venv
+python __init__.py
 ```
 ## speed up dev
 test the snippet code via 
