@@ -9,6 +9,7 @@
 # TODO ~~dual robots~~, wheeled robots
 # TODO a better way to align cube with gripper orientation
 # TODO rewrite rope in omni.isaac.core way
+# TODO use xxx view classes for high throughtput
 
 # NEXT 
 # TODO maybe to disable physics, rigidbodyapi and colliders for replay????
@@ -83,6 +84,37 @@ from datetime import datetime
 #     async def setup_post_reset(cls):
 #     async def setup_post_clear(cls):
 class FrankaRope(BaseSample):
+
+    def _add_fixed_cylinder(self):
+        from omni.isaac.core.objects import FixedCylinder
+        prim = FixedCylinder(
+            prim_path=find_unique_string_name(
+                    initial_name=f"/World/Extras/FixedCylinder", is_unique_fn=lambda x: not is_prim_path_valid(x)
+                ),
+            radius=0.01,
+            height=0.11,
+            position=[0.0,-0.05,0.04],
+            color=np.array([1.0, 0.0, 0.0])
+        )
+        # self.extra_prims["fixed_cylinder"]=prim
+
+    def _add_visual_line(self):
+        from omni.isaac.core.objects import VisualCylinder
+        prim = VisualCylinder(
+            prim_path=find_unique_string_name(
+                    initial_name=f"/World/Extras/VisualCylinder", is_unique_fn=lambda x: not is_prim_path_valid(x)
+                ),
+            radius=0.05,
+            height=0.3,
+            position=[0.0,-0.05,0.15],
+            orientation=[0.7071,0.0,0.7071,0.0],
+            color=np.array([1.0, 0.0, 0.0])
+        )
+    extras={
+        'fixed_cylinder': _add_fixed_cylinder,
+        'visual_line': _add_visual_line,
+    }
+
     def _align_targets(self):
         for _str in ["Left","Right"]:
             # align the cube with endeffector
@@ -96,15 +128,35 @@ class FrankaRope(BaseSample):
             del self._post_physics_callback
         except:
             pass
+        # self.extra_prims={}
         self._old_observations=None
         self._pre_physics_callback=None
         self._post_physics_callback=None
 
-    def __init__(self) -> None:
+    def __init__(self,cfg=None) -> None:
         super().__init__()
+
+        self.physics_dt=1.0/60.0
+        self.rendering_dt=1.0/60.0
+        self._randomize=True
+        self._randomize_on_reset=True
+        self.extra_scenes=None
+        self._rope_damping=0.6
+        self._rope_stiffness=0.1
+        random.seed(42)
+        if cfg is not None:
+            self.physics_dt=eval(cfg.physics_dt)
+            self.rendering_dt=eval(cfg.rendering_dt)
+            self._randomize=cfg._randomize
+            self._randomize_on_reset=cfg._randomize_on_reset
+            self.extra_scenes=cfg.extra_scenes
+            self._rope_damping=float(cfg._rope_damping)
+            self._rope_stiffness=float(cfg._rope_stiffness)
+            random.seed(int(cfg.seed))
+
         self._init_vars()
         self._world_settings = {
-            "physics_dt": 1.0 / 60.0, "stage_units_in_meters": 1.0, "rendering_dt": 1.0 / 60.0,
+            "physics_dt": self.physics_dt, "stage_units_in_meters": 1.0, "rendering_dt": self.rendering_dt,
             "physics_prim_path": "/PhysicsScene", "sim_params":None, "set_defaults":True, "backend":"numpy","device":None
         }
         self._eps=-0.02
@@ -203,13 +255,17 @@ class FrankaRope(BaseSample):
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
 
-        rope=self._rope=RigidBodyRope(_world=world,_randomize=True,_randomize_on_reset=True)
-        
+        rope=self._rope=RigidBodyRope(_world=world,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
+        RigidBodyRope
         try:
             rope.deleteRope()
         except:
             pass
         rope.createRope()
+
+        if self.extra_scenes is not None:
+            for extra in self.extra_scenes:
+                self.extras[extra](self)
 
     # manually reset _task_scene_built to call initialize() in reset(), if task not setted up in seteup_scene
     # world._task_scene_built=False
@@ -381,7 +437,7 @@ class FrankaRope(BaseSample):
                 world.remove_physics_callback("replay_recording")
             if world.physics_callback_exists("sim_step"):
                 world.remove_physics_callback("sim_step")
-            await world.play_async()
+            # await world.play_async()
             world.add_physics_callback("sim_step", self._on_physics_callback)
         else:
             self._init_vars()
@@ -438,23 +494,9 @@ class FrankaRope(BaseSample):
             # this is needed even for identity quaternion, TODO WHY?
             target_position=np.array([-_quat_pos[1],-_quat_pos[2],_quat_pos[3]])
             target_position[2]= max(self._eps, target_position[2])
-            target_orientation=observations[self._target_name[_str]]["orientation"]
-
+            target_orientation=np.array(mu.mul(observations[self._target_name[_str]]["orientation"],self._franka_inverse_orientation[_str]))
             axis,angle=_q2aa(target_orientation)
-            _angle=np.abs(_q2aa(self._franka_orientation[_str])[1])
-            # TODO a better way to align arbitrary rotations?
-            # and to consider rotation > 180 degrees, and ccw cw
-            # example: self._q2aa(euler_angles_to_quat(np.array([0.0,0.0,np.pi*1.5]))): (array([ 0.,  0., -1.]), 1.5707963267948968)
-            if _str=="Left":
-                if -0.25<=self._ccw<0.25:
-                    pass # do nothing
-                elif 0.25<=self._ccw<0.75:
-                    # for 90 deg rotation: (45-135)
-                    target_orientation=_aa2q([axis[1],-axis[0],axis[2]],angle)
-                elif 0.75<=self._ccw<1.25:
-                    # for 180 degree rotation: (135-225 degrees)
-                    target_orientation=_aa2q([-axis[0],-axis[1],axis[2]],angle)
-                else:  raise Exception("Not implemented yet")
+            target_orientation=_aa2q([-axis[0],-axis[1],axis[2]],angle)
 
             # compute_inverse_kinematics does not expect carb._carb.Float4 as inputs
             # target_position (np.array): target **translation** of the target frame (in stage units) relative to the USD stage origin
@@ -703,7 +745,7 @@ class ControlFlow:
             callback_fn()
 
     @classmethod
-    async def setUp_async(cls, callback_fn=None):
+    async def setUp_async(cls,cfg=None, callback_fn=None):
         if (cls._sample is not None):
             try:
                 await cls.tearDown_async()
@@ -711,7 +753,7 @@ class ControlFlow:
                 pass
         # await create_new_stage_async()
         # await update_stage_async()
-        cls._sample = FrankaRope() # TODO replace with yaml
+        cls._sample = FrankaRope(cfg) # TODO replace with yaml
         await update_stage_async()
         await cls._sample.load_world_async()
         await update_stage_async()
@@ -889,7 +931,7 @@ class IsaacUIUtils(ControlFlow):
         async def _setUp_async(cls):
             await omni.kit.app.get_app().next_update_async()
             await super().setUp_async()
-            cls.bind_inputs()
+            # cls.bind_inputs()
             cls.ui_window = omni.ui.Window(window_name, width=300, height=300)
             cls.ui_window.flags = (omni.ui.WINDOW_FLAGS_NO_CLOSE)
             cls.add_buttons()
