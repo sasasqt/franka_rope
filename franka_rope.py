@@ -93,7 +93,7 @@ class FrankaRope(BaseSample):
                 ),
             radius=0.01,
             height=0.11,
-            position=[0.0,-0.05,0.04],
+            position=[0.0,-0.05,0.01],
             color=np.array([1.0, 0.0, 0.0])
         )
         # self.extra_prims["fixed_cylinder"]=prim
@@ -104,9 +104,9 @@ class FrankaRope(BaseSample):
             prim_path=find_unique_string_name(
                     initial_name=f"/World/Extras/VisualCylinder", is_unique_fn=lambda x: not is_prim_path_valid(x)
                 ),
-            radius=0.05,
-            height=0.3,
-            position=[0.0,-0.05,0.15],
+            radius=0.01,
+            height=1.0,
+            position=[0.0,-0.05,0.05],
             orientation=[0.7071,0.0,0.7071,0.0],
             color=np.array([1.0, 0.0, 0.0])
         )
@@ -147,8 +147,8 @@ class FrankaRope(BaseSample):
         if cfg is not None:
             self.physics_dt=eval(cfg.physics_dt)
             self.rendering_dt=eval(cfg.rendering_dt)
-            self._randomize=cfg._randomize
-            self._randomize_on_reset=cfg._randomize_on_reset
+            self._randomize=eval(str(cfg._randomize).title())
+            self._randomize_on_reset=eval(str(cfg._randomize_on_reset).title())
             self.extra_scenes=cfg.extra_scenes
             self._rope_damping=float(cfg._rope_damping)
             self._rope_stiffness=float(cfg._rope_stiffness)
@@ -323,6 +323,10 @@ class FrankaRope(BaseSample):
             # another way using motion policy: exts\omni.isaac.franka\omni\isaac\franka\controllers\rmpflow_controller.py
             #   motion policy: extension_examples\follow_target\follow_target.py
             self._robot_articulation_solver[_str] = KinematicsSolver(robot)
+            # self._robot_articulation_solver[_str]._kinematics_solver._default_position_tolerance=0.001
+            # self._robot_articulation_solver[_str]._kinematics_solver._default_orientation_tolerance=0.001
+            # #self._robot_articulation_solver[_str]._kinematics._default_position_tolerance=0.001
+            # #self._robot_articulation_solver[_str]._kinematics._default_orientation_tolerance=0.001
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
 
             # for rmpflow forward()
@@ -922,7 +926,8 @@ class IsaacUIUtils(ControlFlow):
 
 
     @classmethod
-    def setUp(cls, window_name: str = "Franka Rope") -> None:
+    def setUp(cls, cfg=None,window_name: str = "Franka Rope") -> None:
+        cls.cfg=cfg
         print("Creating window for environment.")
         ui_window = omni.ui.Workspace.get_window(window_name) or cls.ui_window
         if (ui_window is not None):
@@ -930,7 +935,7 @@ class IsaacUIUtils(ControlFlow):
             return # dont create ui window on hot reloading, also dont destroy exsiting window either
         async def _setUp_async(cls):
             await omni.kit.app.get_app().next_update_async()
-            await super().setUp_async()
+            await super().setUp_async(cls.cfg)
             # cls.bind_inputs()
             cls.ui_window = omni.ui.Window(window_name, width=300, height=300)
             cls.ui_window.flags = (omni.ui.WINDOW_FLAGS_NO_CLOSE)
@@ -1119,7 +1124,8 @@ class VRUIUtils(ControlFlow):
         cls.destroy_publisher()
 
     @classmethod
-    def setUp(cls,vr_controller=None):
+    def setUp(cls,cfg=None,vr_controller=None):
+        cls.cfg=cfg
         cls._init_vars()
         for name,_ in cls.BUTTON_CONFIG.items():
             cls.names.append(name)
@@ -1132,7 +1138,7 @@ class VRUIUtils(ControlFlow):
             if (cls.vr_controller is not None):
                 cls.tearDown()
                 
-            await super().setUp_async()
+            await super().setUp_async(cls.cfg)
 
             # issue: isaacsim/omniverse on init launch does not populate rt_prim without out pressing simulation start first (register the timeline event)
             # issue: w/o timeline play, the vr controller wont be registered to send back data
@@ -2079,6 +2085,6 @@ class FollowTarget(tasks.FollowTarget):
         #   1) performance issue, that is 64 times too many calculations
         #   2) franka explosion: only the base/root remains in the scene 
         #       due to velocity accumulation if the target gripper position is unreachable, like inside a rigidbody/below groundplane
-        franka.set_solver_position_iteration_count(1)
+        franka.set_solver_position_iteration_count(4)
         franka.set_solver_velocity_iteration_count(0)
         return franka
