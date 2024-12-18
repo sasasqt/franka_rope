@@ -150,6 +150,7 @@ class FrankaRope(BaseSample):
             self._randomize=eval(str(cfg._randomize).title())
             self._randomize_on_reset=eval(str(cfg._randomize_on_reset).title())
             self.extra_scenes=cfg.extra_scenes
+            self._ropeLength=float(cfg._ropeLength)
             self._rope_damping=float(cfg._rope_damping)
             self._rope_stiffness=float(cfg._rope_stiffness)
             random.seed(int(cfg.seed))
@@ -254,8 +255,7 @@ class FrankaRope(BaseSample):
                                 franka_position=position, franka_orientation=orientation,franka_gripper_closed_position=[-0.3,-0.3]
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
-
-        rope=self._rope=RigidBodyRope(_world=world,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
+        rope=self._rope=RigidBodyRope(_world=world,_ropeLength=self._ropeLength,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
         RigidBodyRope
         try:
             rope.deleteRope()
