@@ -141,6 +141,7 @@ class FrankaRope(BaseSample):
         self._randomize=True
         self._randomize_on_reset=True
         self.extra_scenes=None
+        self._ropeLength=0.8
         self._rope_damping=0.6
         self._rope_stiffness=0.1
         random.seed(42)
@@ -150,6 +151,7 @@ class FrankaRope(BaseSample):
             self._randomize=eval(str(cfg._randomize).title())
             self._randomize_on_reset=eval(str(cfg._randomize_on_reset).title())
             self.extra_scenes=cfg.extra_scenes
+            self._ropeLength=float(cfg._ropeLength)
             self._ropeLength=float(cfg._ropeLength)
             self._rope_damping=float(cfg._rope_damping)
             self._rope_stiffness=float(cfg._rope_stiffness)
@@ -255,6 +257,7 @@ class FrankaRope(BaseSample):
                                 franka_position=position, franka_orientation=orientation,franka_gripper_closed_position=[-0.3,-0.3]
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
+
         rope=self._rope=RigidBodyRope(_world=world,_ropeLength=self._ropeLength,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
         RigidBodyRope
         try:
@@ -1490,7 +1493,7 @@ class RigidBodyRope:
         _rope_name="Rope",
         _linkHalfLength=0.018, 
         _linkRadius=None, #0.013,
-        _ropeLength=1.0,
+        _ropeLength=0.8,
         _rope_damping=0.6, # lower the better, otherwise: bump in the rope
         _rope_stiffness=0.1, # lower: rope like, higher: rigid line
         _coneAngleLimit=140,
