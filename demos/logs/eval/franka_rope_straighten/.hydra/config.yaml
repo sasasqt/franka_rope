@@ -1,0 +1,139 @@
+prefix: franka_rope_straighten
+device: cuda
+mode: eval
+log_dir: logs/${mode}
+eval_data_path: null
+use_wandb: true
+seed: 0
+agent:
+  agent_name: dp
+env:
+  env_class: close
+  num_eef: 1
+  dof: 7
+  eef_dim: 13
+  vectorize: false
+  args:
+    num_eef: ${env.num_eef}
+    dof: ${env.dof}
+    seed: ${seed}
+    obs_mode: pc
+    ac_mode: rel
+    max_episode_length: 100
+    num_points: ${data.dataset.num_points}
+    randomize_rotation: false
+    randomize_scale: false
+    scale_low: 1.0
+    scale_high: 1.0
+    scale_aspect_limit: 100.0
+    uniform_scaling: false
+    cam_resolution: 512
+    vis: true
+    freq: 5
+    ac_noise: 0.0
+data:
+  dataset_class: base_dataset
+  dataset:
+    num_training_steps: ???
+    path: null
+    num_points: 35
+    num_augment: 0
+    same_aug_per_sample: true
+    aug_keep_original: true
+    aug_scale_low: 0.5
+    aug_scale_high: 1.5
+    aug_scale_aspect_limit: 1.0
+    aug_scale_rot: -1
+    aug_scale_pos: 0.1
+    aug_zero_z_offset: false
+    aug_center:
+    - 0.0
+    - 0.0
+    - 0.0
+    shuffle_pc: false
+    num_workers: 12
+    dof: ${env.dof}
+    num_eef: ${env.num_eef}
+    eef_dim: ${env.eef_dim}
+    obs_horizon: ${model.obs_horizon}
+    pred_horizon: ${model.pred_horizon}
+    reduce_horizon_dim: false
+    min_demo_length: 15
+  valid_dataset:
+    num_training_steps: ???
+    path: null
+    num_points: ${data.dataset.num_points}
+    num_augment: ${data.dataset.num_augment}
+    same_aug_per_sample: ${data.dataset.same_aug_per_sample}
+    aug_keep_original: ${data.dataset.aug_keep_original}
+    aug_scale_low: ${data.dataset.aug_scale_low}
+    aug_scale_high: ${data.dataset.aug_scale_high}
+    aug_scale_aspect_limit: ${data.dataset.aug_scale_aspect_limit}
+    aug_scale_rot: ${data.dataset.aug_scale_rot}
+    aug_scale_pos: ${data.dataset.aug_scale_pos}
+    aug_zero_z_offset: ${data.dataset.aug_zero_z_offset}
+    aug_center: ${data.dataset.aug_center}
+    shuffle_pc: ${data.dataset.shuffle_pc}
+    num_workers: ${data.dataset.num_workers}
+    dof: ${data.dataset.dof}
+    num_eef: ${data.dataset.num_eef}
+    eef_dim: ${data.dataset.eef_dim}
+    obs_horizon: ${data.dataset.obs_horizon}
+    pred_horizon: ${data.dataset.pred_horizon}
+    reduce_horizon_dim: ${data.dataset.reduce_horizon_dim}
+    min_demo_length: ${data.dataset.min_demo_length}
+model:
+  hidden_dim: 32
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    num_train_timesteps: 100
+    beta_schedule: squaredcos_cap_v2
+    clip_sample: true
+    prediction_type: epsilon
+  obs_horizon: 4
+  ac_horizon: 2
+  pred_horizon: 16
+  encoder:
+    c_dim: ${model.hidden_dim}
+    backbone_type: vn_pointnet
+    backbone_args:
+      h_dim: ${model.hidden_dim}
+      c_dim: ${model.encoder.c_dim}
+      num_layers: 4
+      knn: 8
+  obs_mode: ${env.args.obs_mode}
+  ac_mode: ${env.args.ac_mode}
+  use_torch_compile: false
+training:
+  batch_size: 1024
+  num_epochs: 400
+  lr: 3.0e-05
+  weight_decay: 1.0e-06
+  num_eval_episodes: 12
+  eval_interval: 1000000
+  save_interval: 50
+  vis_interval: 100
+  ckpt: C:\Users\Shadow\project\equibot_for_franka_rope\logs\train\2025-01-04_05-16-15_00line2s_dp_rel\ckpt00399.pth
+eval:
+  last_ckpt: 1999
+  num_ckpts_to_eval: 5
+wandb:
+  entity: ab36
+  project: equibot
+franka_rope:
+  physics_dt: 1.0/30.0
+  rendering_dt: 1.0/30.0
+  _randomize: true
+  _randomize_on_reset: false
+  extra_scenes: null
+  _rope_damping: 0.6
+  _rope_stiffness: 0.1
+  from_demo: r"C:\Users\Shadow\project\franka_rope\demos\test_straighten_right\output_data_2024-12-02_15-38-13.json"
+  start_time: 80
+  manually_close: false
+  seed: 42
+  rel: true
+  preprocess:
+    input_dir: r"C:\Users\Shadow\project\franka_rope\demos\02_train"
+    output_dir: r"C:\Users\Shadow\project\franka_data\tmp"
+    rel: ${franka_rope.rel}

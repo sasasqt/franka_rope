@@ -1,0 +1,8 @@
+- prefix=franka_rope_straighten
+- mode=eval
+- model.use_torch_compile=false
+- training.ckpt=C:\Users\Shadow\project\equibot_for_franka_rope\logs\train\2025-01-04_05-16-15_00line2s_dp_rel\ckpt00399.pth
+- franka_rope.start_time=80
+- model.ac_horizon=2
+- model.hidden_dim=32
+- model.pred_horizon=16

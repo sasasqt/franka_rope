@@ -1,0 +1,33 @@
+[2025-01-05 05:13:36,452][root][INFO] - number of unique trainable parameters 41177611
+[2025-01-05 05:13:36,581][root][INFO] - Initialized OG DP Policy with 41194411 unique trainable params in total
+[2025-01-05 05:13:50,106][root][INFO] - Inference time: 2.164s
+[2025-01-05 05:13:50,172][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:51,329][root][INFO] - Inference time: 1.097s
+[2025-01-05 05:13:51,444][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:52,670][root][INFO] - Inference time: 1.166s
+[2025-01-05 05:13:52,729][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:53,874][root][INFO] - Inference time: 1.093s
+[2025-01-05 05:13:53,931][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:55,112][root][INFO] - Inference time: 1.124s
+[2025-01-05 05:13:55,176][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:56,262][root][INFO] - Inference time: 1.025s
+[2025-01-05 05:13:56,319][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:57,493][root][INFO] - Inference time: 1.121s
+[2025-01-05 05:13:57,556][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:58,720][root][INFO] - Inference time: 1.106s
+[2025-01-05 05:13:58,776][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:13:59,992][root][INFO] - Inference time: 1.160s
+[2025-01-05 05:14:00,048][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:01,240][root][INFO] - Inference time: 1.134s
+[2025-01-05 05:14:01,299][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:02,458][root][INFO] - Inference time: 1.104s
+[2025-01-05 05:14:02,513][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:03,820][root][INFO] - Inference time: 1.232s
+[2025-01-05 05:14:03,881][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:05,190][root][INFO] - Inference time: 1.251s
+[2025-01-05 05:14:05,250][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:06,420][root][INFO] - Inference time: 1.112s
+[2025-01-05 05:14:06,486][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:07,718][root][INFO] - Inference time: 1.166s
+[2025-01-05 05:14:07,779][root][INFO] - Inference time: 0.000s
+[2025-01-05 05:14:09,029][root][INFO] - Inference time: 1.193s
