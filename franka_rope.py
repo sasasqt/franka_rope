@@ -312,8 +312,12 @@ class FrankaRope(BaseSample):
         self._robot_articulation_solver={}
         self._robot_articulation_controller={}
         self._data_logger  = world.get_data_logger()
-
+        self._pre_actions={}
+        self._now_actions={}
         for idx,_str in enumerate(["Left","Right"]):    
+            self._pre_actions[_str]=None
+            self._now_actions[_str]=None
+            
             task=self._task[_str]=world.get_task(f"{_str}_follow_target_task")
             self._target[_str]=task._target
             # self._target.initialize()
@@ -332,14 +336,20 @@ class FrankaRope(BaseSample):
             # #self._robot_articulation_solver[_str]._kinematics._default_orientation_tolerance=0.001
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
 
-            # for rmpflow forward()
+            # # query robot joint properties
+            # print(robot.dof_properties)
+            # print(robot.dof_names)
+
+            # for rmpflow forward() or ik
             _robot_dof=robot.num_dof
             # In radians/s, or stage_units/s
-            max_vel = np.zeros(_robot_dof) + 1.0
+            max_vel = np.zeros(_robot_dof) + 0.5
             max_vel[_robot_dof-1]=None # dont limit gripper
+            max_vel[_robot_dof-2]=None # dont limit gripper
             robot._articulation_view.set_max_joint_velocities(max_vel)
-            # gripper open/close immediately
-            robot._gripper._action_deltas=None
+
+            # # gripper open/close immediately  # dont limit gripper
+            # robot._gripper._action_deltas=None
 
         scene=world.scene
         if scene.object_exists("default_ground_plane"):
@@ -483,14 +493,16 @@ class FrankaRope(BaseSample):
             # if target stays still, do nothing
             if (self._old_observations is not None):
                 _delta_pos=observations[self._target_name[_str]]["position"]-self._old_observations[self._target_name[_str]]["position"]
-                _ori_delta=observations[self._target_name[_str]]["orientation"]-self._old_observations[self._target_name[_str]]["orientation"]
-                if (np.linalg.norm(_delta_pos)+np.linalg.norm(_ori_delta) <= np.finfo(np.dtype(_delta_pos[0])).eps):
+                # _delta_ori=observations[self._target_name[_str]]["orientation"]-self._old_observations[self._target_name[_str]]["orientation"]
+                _delta_ori=mu.mul(observations[self._target_name[_str]]["orientation"],mu.inverse(self._old_observations[self._target_name[_str]]["orientation"]))
+                axis,angle=_q2aa(_delta_ori)
+                if (np.linalg.norm(_delta_pos)+np.linalg.norm(angle) <= np.finfo(np.dtype(_delta_pos[0])).eps):
                     continue
 
             # Frankas are rotated: this has to be compensated
             # 3d pos to 4d quat, correct for rotation and get the desired 3d ~~pos~~ TRANSLATION back in np.array
             #   due to this AttributeError: 'carb._carb.Float4' object has no attribute 'shape': carb to np.array
-            # accouting for franka pos offset
+            # accounting for franka pos offset
             p1 = np.concatenate(([0.0],self._franka_inverse_position[_str]))
             p2 = np.concatenate(([0.0],observations[self._target_name[_str]]["position"]))
             _quat_pos=np.add(p1,p2)
@@ -512,6 +524,7 @@ class FrankaRope(BaseSample):
                 target_position=target_position,
                 target_orientation=target_orientation,
             )
+
             # HELL NO (succ == True) != successed
             # even early return in case of NaN will still cause the BroadPhaseUpdateData error ->  should clip motion.
             #   done via max velocities
@@ -520,7 +533,19 @@ class FrankaRope(BaseSample):
             # >>> new tgt [-0.12670761  0.3028575   0.015     ] <<<
             # actions {'joint_positions': [nan, nan, nan, nan, nan, nan, nan], 'joint_velocities': None, 'joint_efforts': None} is True
             if succ:
-                self._robot_articulation_controller[_str].apply_action(actions)
+
+                self._pre_actions[_str]=self._now_actions[_str] or actions.get_dict()['joint_positions']
+                self._now_actions[_str] = actions.get_dict()['joint_positions']
+                _norm=np.linalg.norm(np.array(self._now_actions[_str])-np.array(self._pre_actions[_str]))
+
+                if (_norm>0.5):
+                    # TELEPORTING: this is easier than to correct the eef velocity afterwards (gripper vel cannot be set directly)
+                    # ValueError: shape mismatch: value array of shape (1,7) could not be broadcast to indexing result of shape (1,9)
+                    # the last 2 are left right finger
+                    self._robot[_str].set_joint_positions(self._now_actions[_str],joint_indices=np.arange(7)) 
+                else:
+                    self._robot_articulation_controller[_str].apply_action(actions)
+
             else:
                 carb.log_warn("IK did not converge to a solution. No action is being taken.")
 
