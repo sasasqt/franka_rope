@@ -36,6 +36,8 @@
 # unity is left handed, isaacsim is right handed
 # quaternion is wxyz in isaacsim, xyzw from simpub.xr_device.meta_quest3 vr_controller.get_input_data() 
 # c++ api headers are in kit\dev\fabric\include\usdrt\scenegraph\usd folder
+# physx visual debugger: https://docs.omniverse.nvidia.com/extensions/latest/ext_omnipvd.html
+
 import carb
 # from viztracer import VizTracer
 # tracer = VizTracer(tracer_entries=99999999,output_file="my_trace.json")
@@ -63,7 +65,7 @@ from omni.physx import get_physx_interface
 # num_threads = 2
 # physx_interface.set_thread_count(num_threads)
 
-from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_angles
+from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_angles, euler_to_rot_matrix
 from omni.isaac.core.utils.prims import is_prim_path_valid
 from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.stage import get_stage_units
@@ -155,6 +157,7 @@ class FrankaRope(BaseSample):
             self._ropeLength=float(cfg._ropeLength)
             self._rope_damping=float(cfg._rope_damping)
             self._rope_stiffness=float(cfg._rope_stiffness)
+            self._rope_y_pos=float(cfg._rope_y_pos) if cfg._rope_y_pos is not None else None
             random.seed(int(cfg.seed))
 
         self._init_vars()
@@ -199,6 +202,16 @@ class FrankaRope(BaseSample):
         world = self._world
         world.clear()
         
+        #         cylinderXform.AddTranslateOp().Set(Gf.Vec3d(0, 0, 0))
+        #         cylinderXform.AddRotateXYZOp().Set(Gf.Vec3f(90, 0, 0))
+
+        # rotate world first after play(), otherwise the franka will compensate the rotation somehow in their code
+        self._world_xform=_world_xform = world.stage.DefinePrim(f'/World', 'Xform')
+        usd_world_xform = UsdGeom.Xform(_world_xform)
+        usd_world_xform.AddTranslateOp().Set(Gf.Vec3f([0,0,0]))
+        usd_world_xform.AddRotateXYZOp().Set(Gf.Vec3f([0,0,0]))
+        usd_world_xform.AddScaleOp().Set(Gf.Vec3f([1,1,1]))
+
         # PhysX error: The application needs to increase PxGpuDynamicsMemoryConfig::foundLostAggregatePairsCapacity to 1101
         self._PhysicsScene=PhysicsScene = world.stage.GetPrimAtPath("/PhysicsScene")
         physxSceneAPI = PhysxSchema.PhysxSceneAPI.Apply(PhysicsScene)
@@ -239,8 +252,8 @@ class FrankaRope(BaseSample):
             franka_robot_name=f"{_str}_franka"
             franka_prim_path=f"/World/{franka_robot_name}"
             target_position=[0.2*idx-0.1, 0.0, 0.015]
-            self._franka_position[_str]=position=[0.0,0.8*idx-0.4,0.0]
-            self._franka_inverse_position[_str]=[0.0,-0.8*idx+0.4,0.0]
+            self._franka_position[_str]=position=[0.0,0.8*idx-0.4,0.0] # (np.linalg.inv(euler_to_rot_matrix(_world_ori)) @ np.array([0.0,0.8*idx-0.4,0.0])).tolist() 
+            self._franka_inverse_position[_str]=[0.0,-0.8*idx+0.4,0.0] # (np.linalg.inv(euler_to_rot_matrix(_world_ori)) @ np.array([0.0,-0.8*idx+0.4,0.0])).tolist() 
 
             # rotate the left franka (left to the rope) by 180 around z: to make workspace easier
             # dont enter quaternion manually: euler_angles_to_quat for stability: eps/6.123234e-17 in [6.123234e-17 0.000000e+00 0.000000e+00 1.000000e+00]
@@ -258,7 +271,7 @@ class FrankaRope(BaseSample):
                                 ) # core task api which also set_robot(), bad practice but in api # TODO
             world.add_task(task)
 
-        rope=self._rope=RigidBodyRope(_world=world,_ropeLength=self._ropeLength,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
+        rope=self._rope=RigidBodyRope(_world=world,_ropeLength=self._ropeLength,_rope_damping=self._rope_damping,_rope_stiffness=self._rope_stiffness,_rope_y_pos=self._rope_y_pos,_randomize=self._randomize,_randomize_on_reset=self._randomize_on_reset)
         RigidBodyRope
         try:
             rope.deleteRope()
@@ -336,14 +349,38 @@ class FrankaRope(BaseSample):
             # #self._robot_articulation_solver[_str]._kinematics._default_orientation_tolerance=0.001
             self._robot_articulation_controller[_str] = robot.get_articulation_controller()
 
+
             # # query robot joint properties
+            # >>> [Lula] Joint 'panda_finger_joint2' is specified as a mimic joint, but its control chain ['panda_finger_joint2' -> 'panda_finger_joint1'] terminates with a joint ['panda_finger_joint1'] that is not a c-space coordinate. Mimic attributes will be ignored.
+            # see https://forums.developer.nvidia.com/t/isaac-2023-1-0-examples-slow-and-buggy/269980/3?u=aabb360
+            # ('type', 'hasLimits', 'lower', 'upper', 'driveMode', 'maxVelocity', 'maxEffort', 'stiffness', 'damping')
+            # [(0,  True, -2.8973    ,  2.8973    , 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -1.76279998,  1.76279998, 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -2.8973    ,  2.8973    , 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -3.07179999, -0.0698    , 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -2.8973    ,  2.8973    , 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -0.0175    ,  3.75250006, 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True, -2.8973    ,  2.8973    , 1, 5.93904701e+36, 1.00000000e+05, 5.72957824e+08, 5.729578e+06)
+            # (0,  True,  0.        ,  0.04      , 1, 3.40282347e+38, 7.19999981e+00, 1.00000000e+04, 1.000000e+03)
+            # (0,  True,  0.        ,  0.04      , 1, 3.40282347e+38, 3.40282347e+38, 0.00000000e+00, 0.000000e+00)]
+
+            maxEffort = robot._articulation_view.get_max_efforts() # [[1.0000000e+05 1.0000000e+05 1.0000000e+05 1.0000000e+05 1.0000000e+05  1.0000000e+05 1.0000000e+05 7.1999998e+00 3.4028235e+38]]
+            maxEffort[0,-1]=maxEffort[0,-2]
+            robot._articulation_view.set_max_efforts(maxEffort)
+            stiffnesses, dampings = robot._articulation_view.get_gains()
+            stiffnesses[0,-1]=stiffnesses[0,-2]
+            dampings[0,-1]=dampings[0,-2]
+            robot._articulation_view.set_gains(kps=stiffnesses, kds=dampings)
+
+            # print(robot.dof_properties)
+            # print(robot.dof_properties.dtype.names)
             # print(robot.dof_properties)
             # print(robot.dof_names)
 
             # for rmpflow forward() or ik
             _robot_dof=robot.num_dof
             # In radians/s, or stage_units/s
-            max_vel = np.zeros(_robot_dof) + 0.5
+            max_vel = np.zeros(_robot_dof) + 1.0
             max_vel[_robot_dof-1]=None # dont limit gripper
             max_vel[_robot_dof-2]=None # dont limit gripper
             robot._articulation_view.set_max_joint_velocities(max_vel)
@@ -1521,6 +1558,7 @@ class RigidBodyRope:
         _ropeLength=0.8,
         _rope_damping=0.6, # lower the better, otherwise: bump in the rope
         _rope_stiffness=0.1, # lower: rope like, higher: rigid line
+        _rope_y_pos=None,
         _coneAngleLimit=140,
         _ropeColor=None,
         _density=None, # 0.000000000000005,
@@ -1538,6 +1576,7 @@ class RigidBodyRope:
         self._ropeLength = _ropeLength
         self._rope_damping = _rope_damping
         self._rope_stiffness = _rope_stiffness
+        self._rope_y_pos=_rope_y_pos
         self._coneAngleLimit = _coneAngleLimit
         self._ropeColor =  _ropeColor or Gf.Vec3f(165.0, 21.0, 21.0)/255.0
         self._density = _density
@@ -1670,7 +1709,7 @@ class RigidBodyRope:
         # self._rope=XFormPrim(xformPath)
         # # register to the scene # TODO as articulation subclass??
         # self._scene.add(self._rope)
-        self.y=y = -0.05
+        self.y=y =self._rope_y_pos or -0.05 #0.7
         self.z=z = 0.5
         self.x=0.0
 
